@@ -119,6 +119,41 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.change-action-group {
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  display: flex;
+  gap: 10px;
+  margin: 0;
+  padding: 10px 12px 12px;
+}
+
+.change-action-group legend {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 4px;
+}
+
+.change-action-group label {
+  align-items: center;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: row;
+  font-size: 14px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.change-action-group input {
+  min-width: auto;
+  padding: 0;
+}
+
+.change-action-group:disabled {
+  background: #eef2f6;
+}
+
 .bucket-list {
   display: grid;
   gap: 8px;
@@ -409,6 +444,10 @@ button:disabled {
   .workspace-header,
   .event-card footer {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .change-action-group {
     flex-direction: column;
   }
 }

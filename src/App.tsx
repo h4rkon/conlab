@@ -8,12 +8,15 @@ type Bucket = {
   description: string
 }
 
+type EventAction = 'Create' | 'Revise' | 'Delete'
+
 type ContentEvent = {
   id: string
   bucketId: string
   author: string
   body: string
   comment: string
+  action: EventAction
   baseEventId?: string
   status: 'Proposed' | 'Accepted' | 'Rejected'
   createdAt: string
@@ -46,6 +49,7 @@ const initialEvents: ContentEvent[] = [
     body: 'Multi-cloud should be framed around resilience, continuity, and control across provider, region, sovereign, and enterprise platform boundaries.',
     comment:
       'Seed proposal to test the acceptance loop before adding richer collaboration rules.',
+    action: 'Create',
     status: 'Proposed',
     createdAt: new Date().toISOString(),
   },
@@ -62,6 +66,10 @@ function formatDate(value: string) {
 
 function truncate(value: string, maxLength = 80) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value
+}
+
+function getEventAction(event: ContentEvent): EventAction {
+  return event.action ?? (event.baseEventId ? 'Revise' : 'Create')
 }
 
 function getRootEventId(event: ContentEvent, eventsById: Map<string, ContentEvent>) {
@@ -91,8 +99,13 @@ function getRenderedEvents(eventsInDisplayOrder: ContentEvent[]) {
 
     const rootId = getRootEventId(event, eventsById)
 
-    if (!renderedByRoot.has(rootId)) {
+    if (!renderedRootOrder.includes(rootId)) {
       renderedRootOrder.push(rootId)
+    }
+
+    if (getEventAction(event) === 'Delete') {
+      renderedByRoot.delete(rootId)
+      continue
     }
 
     renderedByRoot.set(rootId, event)
@@ -109,6 +122,7 @@ function App() {
   const [selectedBucketId, setSelectedBucketId] = useState(initialBuckets[0].id)
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
+  const [changeAction, setChangeAction] = useState<EventAction>('Create')
   const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
@@ -125,6 +139,7 @@ function App() {
 
   function selectBucket(bucketId: string) {
     setSelectedBucketId(bucketId)
+    setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
@@ -135,12 +150,31 @@ function App() {
     setContentComment('')
 
     if (!eventId) {
+      setChangeAction('Create')
       setContentBody('')
       return
     }
 
+    setChangeAction('Revise')
     const eventToRevise = selectedEvents.find((event) => event.id === eventId)
     setContentBody(eventToRevise?.body ?? '')
+  }
+
+  function selectChangeAction(action: EventAction) {
+    setChangeAction(action)
+
+    if (action === 'Create') {
+      setSelectedBaseEventId('')
+      setContentBody('')
+      return
+    }
+
+    if (!selectedBaseEventId) {
+      return
+    }
+
+    const selectedEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
+    setContentBody(selectedEvent?.body ?? '')
   }
 
   function addBucket(event: FormEvent<HTMLFormElement>) {
@@ -170,7 +204,8 @@ function App() {
     if (
       !selectedBucket ||
       pendingEvent ||
-      contentBody.trim().length < 10 ||
+      (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
+      (changeAction !== 'Create' && !selectedBaseEventId) ||
       contentComment.trim().length < 5
     ) {
       return
@@ -183,12 +218,14 @@ function App() {
       author: 'You',
       body: contentBody.trim(),
       comment: contentComment.trim(),
+      action: changeAction,
       baseEventId: selectedBaseEventId || undefined,
       status: 'Proposed',
       createdAt: new Date().toISOString(),
     }
 
     setEvents((current) => [contentEvent, ...current])
+    setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
@@ -295,6 +332,38 @@ function App() {
             </section>
 
             <form className="content-form" onSubmit={proposeContent}>
+              <fieldset className="change-action-group" disabled={Boolean(pendingEvent)}>
+                <legend>Change action</legend>
+                <label>
+                  <input
+                    checked={changeAction === 'Create'}
+                    name="change-action"
+                    onChange={() => selectChangeAction('Create')}
+                    type="radio"
+                  />
+                  Create
+                </label>
+                <label>
+                  <input
+                    checked={changeAction === 'Revise'}
+                    disabled={!selectedBaseEventId}
+                    name="change-action"
+                    onChange={() => selectChangeAction('Revise')}
+                    type="radio"
+                  />
+                  Revise
+                </label>
+                <label>
+                  <input
+                    checked={changeAction === 'Delete'}
+                    disabled={!selectedBaseEventId}
+                    name="change-action"
+                    onChange={() => selectChangeAction('Delete')}
+                    type="radio"
+                  />
+                  Delete
+                </label>
+              </fieldset>
               <label>
                 Change target
                 <select
@@ -305,19 +374,25 @@ function App() {
                   <option value="">New content block</option>
                   {selectedEvents.map((event) => (
                     <option key={event.id} value={event.id}>
-                      {event.id} [{event.status}] {truncate(event.comment, 70)}
+                      {event.id} [{getEventAction(event)}, {event.status}] {truncate(event.comment, 70)}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                {selectedBaseEventId ? `Revise content from ${selectedBaseEventId}` : 'Add proposed content'}
+                {changeAction === 'Delete'
+                  ? `Delete content from ${selectedBaseEventId}`
+                  : selectedBaseEventId
+                    ? `Revise content from ${selectedBaseEventId}`
+                    : 'Add proposed content'}
                 <textarea
-                  disabled={Boolean(pendingEvent)}
+                  disabled={Boolean(pendingEvent) || changeAction === 'Delete'}
                   onChange={(event) => setContentBody(event.target.value)}
                   placeholder={
                     pendingEvent
                       ? 'Accept or reject the active proposal before adding more content.'
+                      : changeAction === 'Delete'
+                        ? 'Selected content will be removed from the rendered bucket text if accepted.'
                       : selectedBaseEventId
                         ? 'Edit the selected content. The original event stays unchanged.'
                       : 'Record the next content change for this bucket.'
@@ -343,7 +418,8 @@ function App() {
               <button
                 disabled={
                   Boolean(pendingEvent) ||
-                  contentBody.trim().length < 10 ||
+                  (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
+                  (changeAction !== 'Create' && !selectedBaseEventId) ||
                   contentComment.trim().length < 5
                 }
                 type="submit"
@@ -364,12 +440,18 @@ function App() {
                     <div className="event-meta">
                       <span className="event-title">
                         <strong>{event.id}</strong>
-                        {event.baseEventId ? <em>Revises {event.baseEventId}</em> : <em>New block</em>}
+                        {getEventAction(event) === 'Delete' ? (
+                          <em>Deletes {event.baseEventId}</em>
+                        ) : event.baseEventId ? (
+                          <em>Revises {event.baseEventId}</em>
+                        ) : (
+                          <em>New block</em>
+                        )}
                       </span>
                       <span className={`pill ${event.status.toLowerCase()}`}>{event.status}</span>
                     </div>
                     <div className="event-change">
-                      <span>Content change</span>
+                      <span>{getEventAction(event) === 'Delete' ? 'Deleted content' : 'Content change'}</span>
                       <p>{event.body}</p>
                     </div>
                     <div className="event-comment">
@@ -410,7 +492,8 @@ function App() {
         <p>
           A bucket can have one proposed content event at a time. Each event carries the content
           change and a comment explaining it. Accept or reject it before adding the next change.
-          A new event may also revise any previous event without mutating the original history entry.
+          A new event may also revise or delete any previous event without mutating the original
+          history entry.
         </p>
         <dl>
           <div>
