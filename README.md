@@ -18,6 +18,7 @@ Implemented:
 - select a previous event and propose a delete with a new comment
 - accept or reject proposed content
 - view rendered bucket text with the accepted events that produced it
+- navigate the rendered bucket text backward and forward through accepted event history
 - view the bucket event log with content changes and comments
 
 ## Run

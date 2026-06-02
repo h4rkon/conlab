@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -86,17 +86,26 @@ function getRootEventId(event: ContentEvent, eventsById: Map<string, ContentEven
   return rootId
 }
 
-function getRenderedEvents(eventsInDisplayOrder: ContentEvent[]) {
+function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLimit?: number) {
   const chronologicalEvents = [...eventsInDisplayOrder].reverse()
   const eventsById = new Map(chronologicalEvents.map((event) => [event.id, event]))
   const renderedByRoot = new Map<string, ContentEvent>()
   const renderedRootOrder: string[] = []
+  let acceptedEventsApplied = 0
 
   for (const event of chronologicalEvents) {
     if (event.status !== 'Accepted') {
       continue
     }
 
+    if (
+      typeof acceptedEventLimit === 'number' &&
+      acceptedEventsApplied >= acceptedEventLimit
+    ) {
+      break
+    }
+
+    acceptedEventsApplied += 1
     const rootId = getRootEventId(event, eventsById)
 
     if (!renderedRootOrder.includes(rootId)) {
@@ -126,6 +135,7 @@ function App() {
   const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
+  const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
 
   const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId) ?? buckets[0]
 
@@ -135,7 +145,17 @@ function App() {
   )
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
-  const renderedEvents = getRenderedEvents(selectedEvents)
+  const acceptedTimeline = [...selectedEvents]
+    .reverse()
+    .filter((event) => event.status === 'Accepted')
+  const latestAcceptedCount = acceptedTimeline.length
+  const appliedAcceptedCount = Math.min(historyAcceptedCount, latestAcceptedCount)
+  const renderedEvents = getRenderedEvents(selectedEvents, appliedAcceptedCount)
+  const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
+
+  useEffect(() => {
+    setHistoryAcceptedCount(latestAcceptedCount)
+  }, [latestAcceptedCount, selectedBucketId])
 
   function selectBucket(bucketId: string) {
     setSelectedBucketId(bucketId)
@@ -315,6 +335,31 @@ function App() {
               <div className="section-title">
                 <h3>Rendered Bucket Text</h3>
                 <span>{renderedEvents.length} rendered blocks</span>
+              </div>
+              <div className="history-controls" aria-label="Rendered history controls">
+                <button
+                  disabled={appliedAcceptedCount === 0}
+                  onClick={() => setHistoryAcceptedCount((current) => Math.max(0, current - 1))}
+                  type="button"
+                >
+                  &lt;&lt;
+                </button>
+                <span>
+                  {appliedEvent
+                    ? `Showing through ${appliedEvent.id} (${appliedAcceptedCount}/${latestAcceptedCount})`
+                    : `Before accepted events (0/${latestAcceptedCount})`}
+                </span>
+                <button
+                  disabled={appliedAcceptedCount >= latestAcceptedCount}
+                  onClick={() =>
+                    setHistoryAcceptedCount((current) =>
+                      Math.min(latestAcceptedCount, current + 1),
+                    )
+                  }
+                  type="button"
+                >
+                  &gt;&gt;
+                </button>
               </div>
               {renderedEvents.length ? (
                 renderedEvents.map((event) => (
