@@ -13,6 +13,7 @@ type ContentEvent = {
   bucketId: string
   author: string
   body: string
+  comment: string
   status: 'Proposed' | 'Accepted' | 'Rejected'
   createdAt: string
   decidedAt?: string
@@ -42,6 +43,8 @@ const initialEvents: ContentEvent[] = [
     bucketId: 'problem-space',
     author: 'System',
     body: 'Multi-cloud should be framed around resilience, continuity, and control across provider, region, sovereign, and enterprise platform boundaries.',
+    comment:
+      'Seed proposal to test the acceptance loop before adding richer collaboration rules.',
     status: 'Proposed',
     createdAt: new Date().toISOString(),
   },
@@ -63,6 +66,7 @@ function App() {
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
   const [contentBody, setContentBody] = useState('')
+  const [contentComment, setContentComment] = useState('')
 
   const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId) ?? buckets[0]
 
@@ -73,6 +77,7 @@ function App() {
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
   const acceptedEvents = selectedEvents.filter((event) => event.status === 'Accepted')
+  const renderedEvents = [...acceptedEvents].reverse()
 
   function addBucket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -98,7 +103,12 @@ function App() {
   function proposeContent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    if (!selectedBucket || pendingEvent || contentBody.trim().length < 10) {
+    if (
+      !selectedBucket ||
+      pendingEvent ||
+      contentBody.trim().length < 10 ||
+      contentComment.trim().length < 5
+    ) {
       return
     }
 
@@ -108,12 +118,14 @@ function App() {
       bucketId: selectedBucket.id,
       author: 'You',
       body: contentBody.trim(),
+      comment: contentComment.trim(),
       status: 'Proposed',
       createdAt: new Date().toISOString(),
     }
 
     setEvents((current) => [contentEvent, ...current])
     setContentBody('')
+    setContentComment('')
   }
 
   function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
@@ -198,11 +210,18 @@ function App() {
 
             <section className="accepted-text" aria-label="Accepted text">
               <div className="section-title">
-                <h3>Accepted Text</h3>
-                <span>{acceptedEvents.length} accepted</span>
+                <h3>Rendered Bucket Text</h3>
+                <span>{renderedEvents.length} accepted</span>
               </div>
-              {acceptedEvents.length ? (
-                acceptedEvents.map((event) => <p key={event.id}>{event.body}</p>)
+              {renderedEvents.length ? (
+                renderedEvents.map((event) => (
+                  <article className="rendered-change" key={event.id}>
+                    <p>{event.body}</p>
+                    <small>
+                      Rendered from {event.id} · {event.comment}
+                    </small>
+                  </article>
+                ))
               ) : (
                 <p className="empty">No accepted content yet.</p>
               )}
@@ -223,7 +242,28 @@ function App() {
                   value={contentBody}
                 />
               </label>
-              <button disabled={Boolean(pendingEvent) || contentBody.trim().length < 10} type="submit">
+              <label>
+                Comment
+                <textarea
+                  disabled={Boolean(pendingEvent)}
+                  onChange={(event) => setContentComment(event.target.value)}
+                  placeholder={
+                    pendingEvent
+                      ? 'Accept or reject the active proposal before adding a new comment.'
+                      : 'Explain why this content change is useful.'
+                  }
+                  rows={3}
+                  value={contentComment}
+                />
+              </label>
+              <button
+                disabled={
+                  Boolean(pendingEvent) ||
+                  contentBody.trim().length < 10 ||
+                  contentComment.trim().length < 5
+                }
+                type="submit"
+              >
                 Propose content
               </button>
             </form>
@@ -241,7 +281,14 @@ function App() {
                       <strong>{event.id}</strong>
                       <span className={`pill ${event.status.toLowerCase()}`}>{event.status}</span>
                     </div>
-                    <p>{event.body}</p>
+                    <div className="event-change">
+                      <span>Content change</span>
+                      <p>{event.body}</p>
+                    </div>
+                    <div className="event-comment">
+                      <span>Comment</span>
+                      <p>{event.comment}</p>
+                    </div>
                     <footer>
                       <span>
                         {event.author} · {formatDate(event.createdAt)}
@@ -274,8 +321,8 @@ function App() {
       <aside className="rules-panel">
         <h3>Current Rule</h3>
         <p>
-          A bucket can have one proposed content event at a time. Accept or reject it before adding the
-          next change.
+          A bucket can have one proposed content event at a time. Each event carries the content
+          change and a comment explaining it. Accept or reject it before adding the next change.
         </p>
         <dl>
           <div>

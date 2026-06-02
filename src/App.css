@@ -182,7 +182,6 @@ button:disabled {
 
 .workspace-header p,
 .rules-panel p,
-.accepted-text p,
 .event-card p {
   color: #475467;
   margin: 8px 0 0;
@@ -242,9 +241,22 @@ button:disabled {
   font-weight: 700;
 }
 
-.accepted-text p {
+.rendered-change {
   border-left: 3px solid #12b76a;
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
   padding-left: 12px;
+}
+
+.rendered-change p {
+  color: #18202b;
+  margin: 0;
+}
+
+.rendered-change small {
+  color: #667085;
+  font-size: 13px;
 }
 
 .empty {
@@ -260,6 +272,8 @@ button:disabled {
 .event-card {
   border: 1px solid #dfe4ea;
   border-radius: 8px;
+  display: grid;
+  gap: 12px;
   padding: 14px;
 }
 
@@ -280,8 +294,37 @@ button:disabled {
   border-top: 1px solid #eef2f6;
   color: #667085;
   font-size: 13px;
-  margin-top: 14px;
   padding-top: 12px;
+}
+
+.event-change,
+.event-comment {
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.event-change {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+}
+
+.event-comment {
+  background: #fffbeb;
+  border: 1px solid #fedf89;
+}
+
+.event-change span,
+.event-comment span {
+  color: #667085;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.event-change p,
+.event-comment p {
+  margin: 6px 0 0;
 }
 
 .decision-actions {

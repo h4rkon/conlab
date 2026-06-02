@@ -4,16 +4,17 @@ Controlled collaboration platform prototype.
 
 ## Current MVP Slice
 
-This first slice models buckets as the texts being created. Contributors do not edit a shared document directly. They record proposed content events inside a bucket, then accept or reject the active proposal before another content proposal can be added.
+This first slice models buckets as the texts being created. Contributors do not edit a shared document directly. They record proposed content events inside a bucket, add a comment explaining the change, then accept or reject the active proposal before another content proposal can be added.
 
 Implemented:
 
 - create a bucket with name and description
 - see all buckets
 - open a bucket workspace
-- propose one content event at a time
+- propose one content event at a time with an explanatory comment
 - accept or reject proposed content
-- view accepted text and the bucket event log
+- view rendered bucket text with the accepted events that produced it
+- view the bucket event log with content changes and comments
 
 ## Run
 
