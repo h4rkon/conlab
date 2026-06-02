@@ -86,26 +86,64 @@ function getRootEventId(event: ContentEvent, eventsById: Map<string, ContentEven
   return rootId
 }
 
-function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLimit?: number) {
+function getAcceptedEventsAtLimit(
+  eventsInDisplayOrder: ContentEvent[],
+  acceptedEventLimit?: number,
+) {
   const chronologicalEvents = [...eventsInDisplayOrder].reverse()
-  const eventsById = new Map(chronologicalEvents.map((event) => [event.id, event]))
+  const acceptedEvents = chronologicalEvents.filter((event) => event.status === 'Accepted')
+
+  if (typeof acceptedEventLimit !== 'number') {
+    return acceptedEvents
+  }
+
+  return acceptedEvents.slice(0, acceptedEventLimit)
+}
+
+function isEventInvalidated(
+  eventId: string,
+  acceptedEvents: ContentEvent[],
+  memo = new Map<string, boolean>(),
+  visiting = new Set<string>(),
+): boolean {
+  const memoized = memo.get(eventId)
+
+  if (typeof memoized === 'boolean') {
+    return memoized
+  }
+
+  if (visiting.has(eventId)) {
+    return false
+  }
+
+  visiting.add(eventId)
+
+  const invalidated = acceptedEvents.some(
+    (event) =>
+      getEventAction(event) === 'Delete' &&
+      event.baseEventId === eventId &&
+      !isEventInvalidated(event.id, acceptedEvents, memo, visiting),
+  )
+
+  visiting.delete(eventId)
+  memo.set(eventId, invalidated)
+  return invalidated
+}
+
+function getActiveAcceptedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLimit?: number) {
+  const acceptedEvents = getAcceptedEventsAtLimit(eventsInDisplayOrder, acceptedEventLimit)
+  const memo = new Map<string, boolean>()
+
+  return acceptedEvents.filter((event) => !isEventInvalidated(event.id, acceptedEvents, memo))
+}
+
+function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLimit?: number) {
+  const activeAcceptedEvents = getActiveAcceptedEvents(eventsInDisplayOrder, acceptedEventLimit)
+  const eventsById = new Map(eventsInDisplayOrder.map((event) => [event.id, event]))
   const renderedByRoot = new Map<string, ContentEvent>()
   const renderedRootOrder: string[] = []
-  let acceptedEventsApplied = 0
 
-  for (const event of chronologicalEvents) {
-    if (event.status !== 'Accepted') {
-      continue
-    }
-
-    if (
-      typeof acceptedEventLimit === 'number' &&
-      acceptedEventsApplied >= acceptedEventLimit
-    ) {
-      break
-    }
-
-    acceptedEventsApplied += 1
+  for (const event of activeAcceptedEvents) {
     const rootId = getRootEventId(event, eventsById)
 
     if (!renderedRootOrder.includes(rootId)) {
@@ -113,6 +151,12 @@ function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLi
     }
 
     if (getEventAction(event) === 'Delete') {
+      const targetEvent = event.baseEventId ? eventsById.get(event.baseEventId) : undefined
+
+      if (targetEvent && getEventAction(targetEvent) === 'Delete') {
+        continue
+      }
+
       renderedByRoot.delete(rootId)
       continue
     }
@@ -145,13 +189,12 @@ function App() {
   )
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
-  const acceptedTimeline = [...selectedEvents]
-    .reverse()
-    .filter((event) => event.status === 'Accepted')
+  const acceptedTimeline = getAcceptedEventsAtLimit(selectedEvents)
   const latestAcceptedCount = acceptedTimeline.length
   const appliedAcceptedCount = Math.min(historyAcceptedCount, latestAcceptedCount)
   const renderedEvents = getRenderedEvents(selectedEvents, appliedAcceptedCount)
   const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
+  const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
 
   useEffect(() => {
     setHistoryAcceptedCount(latestAcceptedCount)
@@ -226,7 +269,7 @@ function App() {
       pendingEvent ||
       (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
       (changeAction !== 'Create' && !selectedBaseEventId) ||
-      contentComment.trim().length < 5
+      contentComment.trim().length < 1
     ) {
       return
     }
@@ -426,7 +469,9 @@ function App() {
               </label>
               <label>
                 {changeAction === 'Delete'
-                  ? `Delete content from ${selectedBaseEventId}`
+                  ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
+                    ? `Delete delete event ${selectedBaseEventId}`
+                    : `Delete content from ${selectedBaseEventId}`
                   : selectedBaseEventId
                     ? `Revise content from ${selectedBaseEventId}`
                     : 'Add proposed content'}
@@ -437,7 +482,9 @@ function App() {
                     pendingEvent
                       ? 'Accept or reject the active proposal before adding more content.'
                       : changeAction === 'Delete'
-                        ? 'Selected content will be removed from the rendered bucket text if accepted.'
+                        ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
+                          ? 'The selected delete event will be invalidated if accepted.'
+                          : 'Selected content will be removed from the rendered bucket text if accepted.'
                       : selectedBaseEventId
                         ? 'Edit the selected content. The original event stays unchanged.'
                       : 'Record the next content change for this bucket.'
@@ -465,7 +512,7 @@ function App() {
                   Boolean(pendingEvent) ||
                   (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
                   (changeAction !== 'Create' && !selectedBaseEventId) ||
-                  contentComment.trim().length < 5
+                  contentComment.trim().length < 1
                 }
                 type="submit"
               >
