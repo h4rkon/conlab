@@ -64,6 +64,7 @@ label {
 }
 
 input,
+select,
 textarea {
   background: #ffffff;
   border: 1px solid #cfd7e2;
@@ -78,12 +79,14 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
   outline: none;
 }
 
+select:disabled,
 textarea:disabled {
   background: #eef2f6;
   color: #667085;
@@ -288,6 +291,18 @@ button:disabled {
 .event-card footer {
   gap: 12px;
   justify-content: space-between;
+}
+
+.event-title {
+  display: grid;
+  gap: 4px;
+}
+
+.event-title em {
+  color: #667085;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
 }
 
 .event-card footer {

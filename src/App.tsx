@@ -14,6 +14,7 @@ type ContentEvent = {
   author: string
   body: string
   comment: string
+  baseEventId?: string
   status: 'Proposed' | 'Accepted' | 'Rejected'
   createdAt: string
   decidedAt?: string
@@ -59,12 +60,56 @@ function formatDate(value: string) {
   }).format(new Date(value))
 }
 
+function truncate(value: string, maxLength = 80) {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value
+}
+
+function getRootEventId(event: ContentEvent, eventsById: Map<string, ContentEvent>) {
+  let rootId = event.baseEventId ?? event.id
+  let current = event.baseEventId ? eventsById.get(event.baseEventId) : event
+  const seen = new Set<string>([event.id])
+
+  while (current?.baseEventId && !seen.has(current.baseEventId)) {
+    seen.add(current.id)
+    rootId = current.baseEventId
+    current = eventsById.get(current.baseEventId)
+  }
+
+  return rootId
+}
+
+function getRenderedEvents(eventsInDisplayOrder: ContentEvent[]) {
+  const chronologicalEvents = [...eventsInDisplayOrder].reverse()
+  const eventsById = new Map(chronologicalEvents.map((event) => [event.id, event]))
+  const renderedByRoot = new Map<string, ContentEvent>()
+  const renderedRootOrder: string[] = []
+
+  for (const event of chronologicalEvents) {
+    if (event.status !== 'Accepted') {
+      continue
+    }
+
+    const rootId = getRootEventId(event, eventsById)
+
+    if (!renderedByRoot.has(rootId)) {
+      renderedRootOrder.push(rootId)
+    }
+
+    renderedByRoot.set(rootId, event)
+  }
+
+  return renderedRootOrder
+    .map((rootId) => renderedByRoot.get(rootId))
+    .filter((event): event is ContentEvent => Boolean(event))
+}
+
 function App() {
   const [buckets, setBuckets] = useState<Bucket[]>(initialBuckets)
   const [events, setEvents] = useState<ContentEvent[]>(initialEvents)
   const [selectedBucketId, setSelectedBucketId] = useState(initialBuckets[0].id)
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
+  const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
 
@@ -76,8 +121,27 @@ function App() {
   )
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
-  const acceptedEvents = selectedEvents.filter((event) => event.status === 'Accepted')
-  const renderedEvents = [...acceptedEvents].reverse()
+  const renderedEvents = getRenderedEvents(selectedEvents)
+
+  function selectBucket(bucketId: string) {
+    setSelectedBucketId(bucketId)
+    setSelectedBaseEventId('')
+    setContentBody('')
+    setContentComment('')
+  }
+
+  function selectBaseEvent(eventId: string) {
+    setSelectedBaseEventId(eventId)
+    setContentComment('')
+
+    if (!eventId) {
+      setContentBody('')
+      return
+    }
+
+    const eventToRevise = selectedEvents.find((event) => event.id === eventId)
+    setContentBody(eventToRevise?.body ?? '')
+  }
 
   function addBucket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -95,7 +159,7 @@ function App() {
     }
 
     setBuckets((current) => [...current, bucket])
-    setSelectedBucketId(bucket.id)
+    selectBucket(bucket.id)
     setBucketName('')
     setBucketDescription('')
   }
@@ -119,11 +183,13 @@ function App() {
       author: 'You',
       body: contentBody.trim(),
       comment: contentComment.trim(),
+      baseEventId: selectedBaseEventId || undefined,
       status: 'Proposed',
       createdAt: new Date().toISOString(),
     }
 
     setEvents((current) => [contentEvent, ...current])
+    setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
   }
@@ -180,7 +246,7 @@ function App() {
               <button
                 className={bucket.id === selectedBucket?.id ? 'bucket-item active' : 'bucket-item'}
                 key={bucket.id}
-                onClick={() => setSelectedBucketId(bucket.id)}
+                onClick={() => selectBucket(bucket.id)}
                 type="button"
               >
                 <span>
@@ -211,14 +277,15 @@ function App() {
             <section className="accepted-text" aria-label="Accepted text">
               <div className="section-title">
                 <h3>Rendered Bucket Text</h3>
-                <span>{renderedEvents.length} accepted</span>
+                <span>{renderedEvents.length} rendered blocks</span>
               </div>
               {renderedEvents.length ? (
                 renderedEvents.map((event) => (
                   <article className="rendered-change" key={event.id}>
                     <p>{event.body}</p>
                     <small>
-                      Rendered from {event.id} · {event.comment}
+                      Rendered from {event.id}
+                      {event.baseEventId ? `, revises ${event.baseEventId}` : ''} · {event.comment}
                     </small>
                   </article>
                 ))
@@ -229,13 +296,30 @@ function App() {
 
             <form className="content-form" onSubmit={proposeContent}>
               <label>
-                Add proposed content
+                Change target
+                <select
+                  disabled={Boolean(pendingEvent)}
+                  onChange={(event) => selectBaseEvent(event.target.value)}
+                  value={selectedBaseEventId}
+                >
+                  <option value="">New content block</option>
+                  {selectedEvents.map((event) => (
+                    <option key={event.id} value={event.id}>
+                      {event.id} [{event.status}] {truncate(event.comment, 70)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                {selectedBaseEventId ? `Revise content from ${selectedBaseEventId}` : 'Add proposed content'}
                 <textarea
                   disabled={Boolean(pendingEvent)}
                   onChange={(event) => setContentBody(event.target.value)}
                   placeholder={
                     pendingEvent
                       ? 'Accept or reject the active proposal before adding more content.'
+                      : selectedBaseEventId
+                        ? 'Edit the selected content. The original event stays unchanged.'
                       : 'Record the next content change for this bucket.'
                   }
                   rows={5}
@@ -278,7 +362,10 @@ function App() {
                 selectedEvents.map((event) => (
                   <article className="event-card" key={event.id}>
                     <div className="event-meta">
-                      <strong>{event.id}</strong>
+                      <span className="event-title">
+                        <strong>{event.id}</strong>
+                        {event.baseEventId ? <em>Revises {event.baseEventId}</em> : <em>New block</em>}
+                      </span>
                       <span className={`pill ${event.status.toLowerCase()}`}>{event.status}</span>
                     </div>
                     <div className="event-change">
@@ -323,6 +410,7 @@ function App() {
         <p>
           A bucket can have one proposed content event at a time. Each event carries the content
           change and a comment explaining it. Accept or reject it before adding the next change.
+          A new event may also revise any previous event without mutating the original history entry.
         </p>
         <dl>
           <div>
