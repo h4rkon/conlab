@@ -8,6 +8,23 @@ type Bucket = {
   description: string
 }
 
+type Workspace = {
+  version: 1
+  buckets: Bucket[]
+  events: ContentEvent[]
+}
+
+type GitHubRepo = {
+  owner: string
+  repo: string
+}
+
+type GitHubConnection = GitHubRepo & {
+  repoUrl: string
+  token: string
+  branch: string
+}
+
 type EventAction = 'Create' | 'Revise' | 'Delete'
 
 type ContentEvent = {
@@ -23,37 +40,14 @@ type ContentEvent = {
   decidedAt?: string
 }
 
-const initialBuckets: Bucket[] = [
-  {
-    id: 'problem-space',
-    name: 'Problem Space',
-    description: 'Customer pains, market triggers, and reasons why this topic matters.',
-  },
-  {
-    id: 'ambition',
-    name: 'Ambition',
-    description: 'Target outcomes, principles, and future-state statements.',
-  },
-  {
-    id: 'questions',
-    name: 'Questions',
-    description: 'Open points that need clarification before the text can move forward.',
-  },
-]
+const WORKSPACE_FILE = 'conlab.json'
+const CONNECTION_STORAGE_KEY = 'conlab.githubConnection'
 
-const initialEvents: ContentEvent[] = [
-  {
-    id: 'EV-001',
-    bucketId: 'problem-space',
-    author: 'System',
-    body: 'Multi-cloud should be framed around resilience, continuity, and control across provider, region, sovereign, and enterprise platform boundaries.',
-    comment:
-      'Seed proposal to test the acceptance loop before adding richer collaboration rules.',
-    action: 'Create',
-    status: 'Proposed',
-    createdAt: new Date().toISOString(),
-  },
-]
+const emptyWorkspace: Workspace = {
+  version: 1,
+  buckets: [],
+  events: [],
+}
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat(undefined, {
@@ -66,6 +60,107 @@ function formatDate(value: string) {
 
 function truncate(value: string, maxLength = 80) {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value
+}
+
+function encodeBase64(value: string) {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ''
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte)
+  }
+
+  return btoa(binary)
+}
+
+function decodeBase64(value: string) {
+  const binary = atob(value.replace(/\s/g, ''))
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+function parseGitHubRepoUrl(repoUrl: string): GitHubRepo {
+  const normalizedUrl = repoUrl.trim().replace(/\.git$/, '')
+  const parsedUrl = new URL(normalizedUrl)
+  const [owner, repo] = parsedUrl.pathname.split('/').filter(Boolean)
+
+  if (parsedUrl.hostname !== 'github.com' || !owner || !repo) {
+    throw new Error('Use a GitHub repo URL like https://github.com/owner/repo')
+  }
+
+  return { owner, repo }
+}
+
+async function githubRequest<T>(connection: GitHubConnection, path: string, init?: RequestInit) {
+  const response = await fetch(`https://api.github.com${path}`, {
+    ...init,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${connection.token}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...init?.headers,
+    },
+  })
+
+  if (!response.ok) {
+    const details = await response.json().catch(() => undefined)
+    const message = typeof details?.message === 'string' ? details.message : response.statusText
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
+}
+
+async function getDefaultBranch(connection: Omit<GitHubConnection, 'branch'>) {
+  const repo = await githubRequest<{ default_branch?: string }>(
+    { ...connection, branch: 'main' },
+    `/repos/${connection.owner}/${connection.repo}`,
+  )
+
+  return repo.default_branch || 'main'
+}
+
+async function loadWorkspaceFile(connection: GitHubConnection) {
+  const file = await githubRequest<{ content: string; sha: string }>(
+    connection,
+    `/repos/${connection.owner}/${connection.repo}/contents/${WORKSPACE_FILE}?ref=${connection.branch}`,
+  )
+
+  return {
+    workspace: JSON.parse(decodeBase64(file.content)) as Workspace,
+    sha: file.sha,
+  }
+}
+
+async function commitWorkspaceFile(
+  connection: GitHubConnection,
+  workspace: Workspace,
+  message: string,
+  sha?: string,
+) {
+  const body: {
+    message: string
+    content: string
+    sha?: string
+  } = {
+    message,
+    content: encodeBase64(`${JSON.stringify(workspace, null, 2)}\n`),
+  }
+
+  if (sha) {
+    body.sha = sha
+  }
+
+  const result = await githubRequest<{ content?: { sha?: string } }>(
+    connection,
+    `/repos/${connection.owner}/${connection.repo}/contents/${WORKSPACE_FILE}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    },
+  )
+
+  return result.content?.sha
 }
 
 function getEventAction(event: ContentEvent): EventAction {
@@ -170,9 +265,17 @@ function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLi
 }
 
 function App() {
-  const [buckets, setBuckets] = useState<Bucket[]>(initialBuckets)
-  const [events, setEvents] = useState<ContentEvent[]>(initialEvents)
-  const [selectedBucketId, setSelectedBucketId] = useState(initialBuckets[0].id)
+  const [connection, setConnection] = useState<GitHubConnection | null>(null)
+  const [repoUrl, setRepoUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [workspaceSha, setWorkspaceSha] = useState<string>()
+  const [isConnecting, setIsConnecting] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [connectionError, setConnectionError] = useState('')
+  const [saveError, setSaveError] = useState('')
+  const [buckets, setBuckets] = useState<Bucket[]>([])
+  const [events, setEvents] = useState<ContentEvent[]>([])
+  const [selectedBucketId, setSelectedBucketId] = useState('')
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
   const [changeAction, setChangeAction] = useState<EventAction>('Create')
@@ -197,8 +300,114 @@ function App() {
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
 
   useEffect(() => {
+    const storedConnection = localStorage.getItem(CONNECTION_STORAGE_KEY)
+
+    if (!storedConnection) {
+      return
+    }
+
+    try {
+      const parsedConnection = JSON.parse(storedConnection) as GitHubConnection
+      setRepoUrl(parsedConnection.repoUrl)
+      setToken(parsedConnection.token)
+    } catch {
+      localStorage.removeItem(CONNECTION_STORAGE_KEY)
+    }
+  }, [])
+
+  useEffect(() => {
     setHistoryAcceptedCount(latestAcceptedCount)
   }, [latestAcceptedCount, selectedBucketId])
+
+  async function connectToGitHub(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setConnectionError('')
+    setSaveError('')
+    setIsConnecting(true)
+
+    try {
+      const repo = parseGitHubRepoUrl(repoUrl)
+      const baseConnection = {
+        ...repo,
+        repoUrl: repoUrl.trim(),
+        token: token.trim(),
+      }
+      const branch = await getDefaultBranch(baseConnection)
+      const nextConnection: GitHubConnection = {
+        ...baseConnection,
+        branch,
+      }
+
+      try {
+        const loaded = await loadWorkspaceFile(nextConnection)
+        setBuckets(loaded.workspace.buckets ?? [])
+        setEvents(loaded.workspace.events ?? [])
+        setWorkspaceSha(loaded.sha)
+        setSelectedBucketId(loaded.workspace.buckets?.[0]?.id ?? '')
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'Not Found') {
+          throw error
+        }
+
+        const createdSha = await commitWorkspaceFile(
+          nextConnection,
+          emptyWorkspace,
+          'Initialize Conlab workspace',
+        )
+
+        setBuckets([])
+        setEvents([])
+        setWorkspaceSha(createdSha)
+        setSelectedBucketId('')
+      }
+
+      setConnection(nextConnection)
+      localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(nextConnection))
+    } catch (error) {
+      setConnectionError(error instanceof Error ? error.message : 'Could not connect to GitHub')
+    } finally {
+      setIsConnecting(false)
+    }
+  }
+
+  async function saveWorkspace(nextBuckets: Bucket[], nextEvents: ContentEvent[], message: string) {
+    if (!connection) {
+      return
+    }
+
+    setIsSaving(true)
+    setSaveError('')
+
+    try {
+      const nextSha = await commitWorkspaceFile(
+        connection,
+        {
+          version: 1,
+          buckets: nextBuckets,
+          events: nextEvents,
+        },
+        message,
+        workspaceSha,
+      )
+
+      setWorkspaceSha(nextSha)
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save to GitHub')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  function disconnectGitHub() {
+    localStorage.removeItem(CONNECTION_STORAGE_KEY)
+    setConnection(null)
+    setRepoUrl('')
+    setToken('')
+    setWorkspaceSha(undefined)
+    setBuckets([])
+    setEvents([])
+    setSelectedBucketId('')
+  }
 
   function selectBucket(bucketId: string) {
     setSelectedBucketId(bucketId)
@@ -240,7 +449,7 @@ function App() {
     setContentBody(selectedEvent?.body ?? '')
   }
 
-  function addBucket(event: FormEvent<HTMLFormElement>) {
+  async function addBucket(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const name = bucketName.trim()
     const description = bucketDescription.trim()
@@ -255,13 +464,15 @@ function App() {
       description,
     }
 
-    setBuckets((current) => [...current, bucket])
+    const nextBuckets = [...buckets, bucket]
+    setBuckets(nextBuckets)
     selectBucket(bucket.id)
     setBucketName('')
     setBucketDescription('')
+    await saveWorkspace(nextBuckets, events, `Create bucket ${name}`)
   }
 
-  function proposeContent(event: FormEvent<HTMLFormElement>) {
+  async function proposeContent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
     if (
@@ -287,24 +498,66 @@ function App() {
       createdAt: new Date().toISOString(),
     }
 
-    setEvents((current) => [contentEvent, ...current])
+    const nextEvents = [contentEvent, ...events]
+    setEvents(nextEvents)
     setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
+    await saveWorkspace(buckets, nextEvents, `Propose ${changeAction.toLowerCase()} ${contentEvent.id}`)
   }
 
-  function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
-    setEvents((current) =>
-      current.map((event) =>
-        event.id === eventId
-          ? {
-              ...event,
-              status,
-              decidedAt: new Date().toISOString(),
-            }
-          : event,
-      ),
+  async function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
+    const nextEvents = events.map((event) =>
+      event.id === eventId
+        ? {
+            ...event,
+            status,
+            decidedAt: new Date().toISOString(),
+          }
+        : event,
+    )
+
+    setEvents(nextEvents)
+    await saveWorkspace(buckets, nextEvents, `${status} event ${eventId}`)
+  }
+
+  if (!connection) {
+    return (
+      <main className="setup-shell">
+        <section className="setup-panel">
+          <p className="eyebrow">Install Workspace</p>
+          <h1>Connect a GitHub repo</h1>
+          <p>
+            Paste an empty or existing GitHub repository URL and a PAT with repository contents
+            read/write access. The app will create or load {WORKSPACE_FILE}.
+          </p>
+
+          <form className="setup-form" onSubmit={connectToGitHub}>
+            <label>
+              GitHub repo URL
+              <input
+                onChange={(event) => setRepoUrl(event.target.value)}
+                placeholder="https://github.com/owner/repo"
+                value={repoUrl}
+              />
+            </label>
+            <label>
+              GitHub PAT
+              <input
+                onChange={(event) => setToken(event.target.value)}
+                placeholder="ghp_... or github_pat_..."
+                type="password"
+                value={token}
+              />
+            </label>
+            {connectionError ? <p className="error-text">{connectionError}</p> : null}
+            <button disabled={isConnecting || !repoUrl.trim() || !token.trim()} type="submit">
+              {isConnecting ? 'Connecting...' : 'Connect workspace'}
+            </button>
+          </form>
+        </section>
+      </main>
     )
   }
 
@@ -314,6 +567,14 @@ function App() {
         <div className="panel-header">
           <p className="eyebrow">Level 1 MVP</p>
           <h1>Contribution Ledger</h1>
+          <p className="repo-link">
+            {connection.owner}/{connection.repo} · {connection.branch}
+          </p>
+          <button className="secondary-button" onClick={disconnectGitHub} type="button">
+            Disconnect
+          </button>
+          {isSaving ? <p className="save-state">Saving to GitHub...</p> : null}
+          {saveError ? <p className="error-text">{saveError}</p> : null}
         </div>
 
         <form className="bucket-form" onSubmit={addBucket}>
@@ -334,7 +595,7 @@ function App() {
               rows={3}
             />
           </label>
-          <button type="submit">Create bucket</button>
+          <button disabled={isSaving} type="submit">Create bucket</button>
         </form>
 
         <nav className="bucket-list">
@@ -508,7 +769,8 @@ function App() {
                 />
               </label>
               <button
-                disabled={
+                  disabled={
+                  isSaving ||
                   Boolean(pendingEvent) ||
                   (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
                   (changeAction !== 'Create' && !selectedBaseEventId) ||
@@ -556,10 +818,18 @@ function App() {
                       </span>
                       {event.status === 'Proposed' ? (
                         <span className="decision-actions">
-                          <button onClick={() => decideEvent(event.id, 'Rejected')} type="button">
+                          <button
+                            disabled={isSaving}
+                            onClick={() => decideEvent(event.id, 'Rejected')}
+                            type="button"
+                          >
                             Reject
                           </button>
-                          <button onClick={() => decideEvent(event.id, 'Accepted')} type="button">
+                          <button
+                            disabled={isSaving}
+                            onClick={() => decideEvent(event.id, 'Accepted')}
+                            type="button"
+                          >
                             Accept
                           </button>
                         </span>

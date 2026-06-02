@@ -2,6 +2,23 @@
 
 Controlled collaboration platform prototype.
 
+## GitHub Workspace
+
+Run the app, then connect it to a GitHub repository from the install screen.
+
+Required inputs:
+
+- GitHub repository URL, such as `https://github.com/owner/repo`
+- GitHub PAT with repository contents read/write access
+
+The app stores bucket and event data in:
+
+```text
+conlab.json
+```
+
+If the file does not exist, the app initializes it in the repository.
+
 ## Current MVP Slice
 
 This first slice models buckets as the texts being created. Contributors do not edit a shared document directly. They record proposed content events inside a bucket, add a comment explaining the change, then accept or reject the active proposal before another content proposal can be added.
@@ -10,6 +27,8 @@ Events can create a new content block, revise a previous event, or delete a prev
 
 Implemented:
 
+- connect to a GitHub repo from the app UI
+- initialize or load `conlab.json`
 - create a bucket with name and description
 - see all buckets
 - open a bucket workspace
