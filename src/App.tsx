@@ -163,6 +163,14 @@ async function commitWorkspaceFile(
   return result.content?.sha
 }
 
+function shouldInitializeWorkspace(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  return error.message === 'Not Found' || error.message === 'This repository is empty.'
+}
+
 function getEventAction(event: ContentEvent): EventAction {
   return event.action ?? (event.baseEventId ? 'Revise' : 'Create')
 }
@@ -345,7 +353,7 @@ function App() {
         setWorkspaceSha(loaded.sha)
         setSelectedBucketId(loaded.workspace.buckets?.[0]?.id ?? '')
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'Not Found') {
+        if (!shouldInitializeWorkspace(error)) {
           throw error
         }
 
