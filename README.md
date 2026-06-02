@@ -47,3 +47,24 @@ Implemented:
 npm install
 npm run dev
 ```
+
+## UI Tests
+
+The Playwright suite runs against a temporary GitHub branch and deletes that branch during teardown.
+
+Defaults:
+
+- repo: `https://github.com/h4rkon/conlab`
+- token: `TEST_GITHUB_TOKEN`, or ignored `.secret/pat`
+
+Run:
+
+```bash
+npm run test:e2e
+```
+
+Optional:
+
+```bash
+TEST_GITHUB_REPO=https://github.com/owner/repo TEST_GITHUB_TOKEN=... npm run test:e2e
+```

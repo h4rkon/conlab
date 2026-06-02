@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -23,6 +23,7 @@ type GitHubConnection = GitHubRepo & {
   repoUrl: string
   token: string
   branch: string
+  useBranchInCommits: boolean
 }
 
 type EventAction = 'Create' | 'Revise' | 'Delete'
@@ -111,9 +112,9 @@ async function githubRequest<T>(connection: GitHubConnection, path: string, init
   return response.json() as Promise<T>
 }
 
-async function getDefaultBranch(connection: Omit<GitHubConnection, 'branch'>) {
+async function getDefaultBranch(connection: GitHubRepo & { repoUrl: string; token: string }) {
   const repo = await githubRequest<{ default_branch?: string }>(
-    { ...connection, branch: 'main' },
+    { ...connection, branch: 'main', useBranchInCommits: false },
     `/repos/${connection.owner}/${connection.repo}`,
   )
 
@@ -141,10 +142,15 @@ async function commitWorkspaceFile(
   const body: {
     message: string
     content: string
+    branch?: string
     sha?: string
   } = {
     message,
     content: encodeBase64(`${JSON.stringify(workspace, null, 2)}\n`),
+  }
+
+  if (connection.useBranchInCommits) {
+    body.branch = connection.branch
   }
 
   if (sha) {
@@ -169,6 +175,21 @@ function shouldInitializeWorkspace(error: unknown) {
   }
 
   return error.message === 'Not Found' || error.message === 'This repository is empty.'
+}
+
+function getStoredConnection() {
+  const storedConnection = localStorage.getItem(CONNECTION_STORAGE_KEY)
+
+  if (!storedConnection) {
+    return undefined
+  }
+
+  try {
+    return JSON.parse(storedConnection) as GitHubConnection
+  } catch {
+    localStorage.removeItem(CONNECTION_STORAGE_KEY)
+    return undefined
+  }
 }
 
 function getEventAction(event: ContentEvent): EventAction {
@@ -272,10 +293,18 @@ function getRenderedEvents(eventsInDisplayOrder: ContentEvent[], acceptedEventLi
     .filter((event): event is ContentEvent => Boolean(event))
 }
 
+function countAcceptedEvents(events: ContentEvent[], bucketId: string) {
+  return events.filter((event) => event.bucketId === bucketId && event.status === 'Accepted').length
+}
+
 function App() {
+  const [storedConnection] = useState(getStoredConnection)
   const [connection, setConnection] = useState<GitHubConnection | null>(null)
-  const [repoUrl, setRepoUrl] = useState('')
-  const [token, setToken] = useState('')
+  const [repoUrl, setRepoUrl] = useState(storedConnection?.repoUrl ?? '')
+  const [token, setToken] = useState(storedConnection?.token ?? '')
+  const [branchInput, setBranchInput] = useState(
+    storedConnection?.useBranchInCommits ? storedConnection.branch : '',
+  )
   const [workspaceSha, setWorkspaceSha] = useState<string>()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
@@ -307,26 +336,6 @@ function App() {
   const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
 
-  useEffect(() => {
-    const storedConnection = localStorage.getItem(CONNECTION_STORAGE_KEY)
-
-    if (!storedConnection) {
-      return
-    }
-
-    try {
-      const parsedConnection = JSON.parse(storedConnection) as GitHubConnection
-      setRepoUrl(parsedConnection.repoUrl)
-      setToken(parsedConnection.token)
-    } catch {
-      localStorage.removeItem(CONNECTION_STORAGE_KEY)
-    }
-  }, [])
-
-  useEffect(() => {
-    setHistoryAcceptedCount(latestAcceptedCount)
-  }, [latestAcceptedCount, selectedBucketId])
-
   async function connectToGitHub(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setConnectionError('')
@@ -340,10 +349,12 @@ function App() {
         repoUrl: repoUrl.trim(),
         token: token.trim(),
       }
-      const branch = await getDefaultBranch(baseConnection)
+      const requestedBranch = branchInput.trim()
+      const branch = requestedBranch || (await getDefaultBranch(baseConnection))
       const nextConnection: GitHubConnection = {
         ...baseConnection,
         branch,
+        useBranchInCommits: Boolean(requestedBranch),
       }
 
       try {
@@ -351,7 +362,9 @@ function App() {
         setBuckets(loaded.workspace.buckets ?? [])
         setEvents(loaded.workspace.events ?? [])
         setWorkspaceSha(loaded.sha)
-        setSelectedBucketId(loaded.workspace.buckets?.[0]?.id ?? '')
+        const firstBucketId = loaded.workspace.buckets?.[0]?.id ?? ''
+        setSelectedBucketId(firstBucketId)
+        setHistoryAcceptedCount(countAcceptedEvents(loaded.workspace.events ?? [], firstBucketId))
       } catch (error) {
         if (!shouldInitializeWorkspace(error)) {
           throw error
@@ -367,6 +380,7 @@ function App() {
         setEvents([])
         setWorkspaceSha(createdSha)
         setSelectedBucketId('')
+        setHistoryAcceptedCount(0)
       }
 
       setConnection(nextConnection)
@@ -411,6 +425,7 @@ function App() {
     setConnection(null)
     setRepoUrl('')
     setToken('')
+    setBranchInput('')
     setWorkspaceSha(undefined)
     setBuckets([])
     setEvents([])
@@ -423,6 +438,7 @@ function App() {
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
+    setHistoryAcceptedCount(countAcceptedEvents(events, bucketId))
   }
 
   function selectBaseEvent(eventId: string) {
@@ -527,6 +543,7 @@ function App() {
     )
 
     setEvents(nextEvents)
+    setHistoryAcceptedCount(countAcceptedEvents(nextEvents, selectedBucket.id))
     await saveWorkspace(buckets, nextEvents, `${status} event ${eventId}`)
   }
 
@@ -557,6 +574,14 @@ function App() {
                 placeholder="ghp_... or github_pat_..."
                 type="password"
                 value={token}
+              />
+            </label>
+            <label>
+              Branch
+              <input
+                onChange={(event) => setBranchInput(event.target.value)}
+                placeholder="Leave blank for default branch"
+                value={branchInput}
               />
             </label>
             {connectionError ? <p className="error-text">{connectionError}</p> : null}

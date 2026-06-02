@@ -1,4 +1,4 @@
-.PHONY: run install dev build
+.PHONY: run install dev build test-e2e
 
 run: install dev
 
@@ -10,3 +10,6 @@ dev:
 
 build:
 	npm run build
+
+test-e2e:
+	npm run test:e2e
