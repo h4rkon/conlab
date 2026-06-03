@@ -13,7 +13,7 @@ const token = getTestToken()
 let branchName = ''
 
 async function waitForWorkspaceCommit(page: Page, action: () => Promise<void>) {
-  await expect(page.getByText('Saving to Git...')).not.toBeVisible()
+  await expect(page.locator('.busy-overlay')).not.toBeVisible()
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === 'PUT' &&
@@ -26,7 +26,7 @@ async function waitForWorkspaceCommit(page: Page, action: () => Promise<void>) {
     throw new Error(`${error instanceof Error ? error.message : 'No commit response'}; UI errors: ${errors.join(' | ')}`)
   })
   expect(response.ok()).toBeTruthy()
-  await expect(page.getByText('Saving to Git...')).not.toBeVisible()
+  await expect(page.locator('.busy-overlay')).not.toBeVisible()
 }
 
 function eventCard(page: Page, eventId: string) {

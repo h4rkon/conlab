@@ -17,6 +17,19 @@ type Workspace = {
 }
 
 type GitProvider = 'github' | 'gitlab'
+type ConlabRole = 'read-only' | 'contributor' | 'reviewer'
+
+type GitUser = {
+  id: string
+  username: string
+  name: string
+}
+
+type GitAccess = {
+  user: GitUser
+  providerRole: string
+  conlabRole: ConlabRole
+}
 
 type GitHubRepo = {
   owner: string
@@ -29,6 +42,7 @@ type GitConnectionBase = {
   token: string
   branch: string
   displayName: string
+  access?: GitAccess
   useBranchInCommits: boolean
 }
 
@@ -242,6 +256,112 @@ async function getDefaultBranch(connection: ParsedGitRepo & { token: string }) {
   )
 
   return project.default_branch || 'main'
+}
+
+function getDisplayUserName(user: GitUser) {
+  return user.name || user.username
+}
+
+function normalizeTokenInput(value: string) {
+  const tokenLines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+
+  return tokenLines.at(-1) ?? value.trim()
+}
+
+function mapGitHubAccess(permissions?: {
+  admin?: boolean
+  maintain?: boolean
+  push?: boolean
+  triage?: boolean
+  pull?: boolean
+}) {
+  if (permissions?.admin) {
+    return { providerRole: 'admin', conlabRole: 'reviewer' as const }
+  }
+
+  if (permissions?.maintain) {
+    return { providerRole: 'maintain', conlabRole: 'reviewer' as const }
+  }
+
+  if (permissions?.push) {
+    return { providerRole: 'push', conlabRole: 'contributor' as const }
+  }
+
+  if (permissions?.triage) {
+    return { providerRole: 'triage', conlabRole: 'read-only' as const }
+  }
+
+  return { providerRole: permissions?.pull ? 'pull' : 'none', conlabRole: 'read-only' as const }
+}
+
+function mapGitLabAccess(accessLevel?: number) {
+  if (typeof accessLevel !== 'number') {
+    return { providerRole: 'none', conlabRole: 'read-only' as const }
+  }
+
+  if (accessLevel >= 40) {
+    return { providerRole: accessLevel >= 50 ? 'owner' : 'maintainer', conlabRole: 'reviewer' as const }
+  }
+
+  if (accessLevel >= 30) {
+    return { providerRole: 'developer', conlabRole: 'contributor' as const }
+  }
+
+  if (accessLevel >= 20) {
+    return { providerRole: 'reporter', conlabRole: 'read-only' as const }
+  }
+
+  if (accessLevel >= 10) {
+    return { providerRole: 'guest', conlabRole: 'read-only' as const }
+  }
+
+  return { providerRole: 'minimal', conlabRole: 'read-only' as const }
+}
+
+async function loadGitAccess(connection: GitConnection): Promise<GitAccess> {
+  if (connection.provider === 'github') {
+    const [user, repo] = await Promise.all([
+      gitHubRequest<{ id: number; login: string; name?: string | null }>(connection, '/user'),
+      gitHubRequest<{
+        permissions?: {
+          admin?: boolean
+          maintain?: boolean
+          push?: boolean
+          triage?: boolean
+          pull?: boolean
+        }
+      }>(connection, `/repos/${connection.owner}/${connection.repo}`),
+    ])
+    const mappedAccess = mapGitHubAccess(repo.permissions)
+
+    return {
+      user: {
+        id: String(user.id),
+        username: user.login,
+        name: user.name || user.login,
+      },
+      ...mappedAccess,
+    }
+  }
+
+  const user = await gitLabRequest<{ id: number; username: string; name?: string | null }>(
+    connection,
+    '/user',
+  )
+  const member = await gitLabRequest<{ access_level?: number }>(
+    connection,
+    `/projects/${encodePathSegment(connection.projectPath)}/members/all/${encodePathSegment(String(user.id))}`,
+  )
+  const mappedAccess = mapGitLabAccess(member.access_level)
+
+  return {
+    user: {
+      id: String(user.id),
+      username: user.username,
+      name: user.name || user.username,
+    },
+    ...mappedAccess,
+  }
 }
 
 async function loadWorkspaceFile(connection: GitConnection) {
@@ -613,6 +733,11 @@ function App() {
   const renderedEvents = getRenderedEvents(selectedEvents, appliedAcceptedCount)
   const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
+  const access = connection?.access
+  const conlabRole = access?.conlabRole ?? 'read-only'
+  const canContribute = conlabRole === 'contributor' || conlabRole === 'reviewer'
+  const canReview = conlabRole === 'reviewer'
+  const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
 
   function applyLoadedWorkspace(loaded: LoadedWorkspace, preferredBucketId = selectedBucketId) {
     const workspace = normalizeWorkspace(loaded.workspace)
@@ -669,9 +794,9 @@ function App() {
     try {
       const repo = parseGitRepoUrl(repoUrl)
       const requestedBranch = branchInput.trim()
-      const trimmedToken = token.trim()
+      const trimmedToken = normalizeTokenInput(token)
       const branch = requestedBranch || (await getDefaultBranch({ ...repo, token: trimmedToken }))
-      const nextConnection: GitConnection =
+      const baseConnection: GitConnection =
         repo.provider === 'github'
           ? {
               ...repo,
@@ -685,6 +810,11 @@ function App() {
               branch,
               useBranchInCommits: Boolean(requestedBranch),
             }
+      const access = await loadGitAccess(baseConnection)
+      const nextConnection: GitConnection = {
+        ...baseConnection,
+        access,
+      }
 
       const loaded = await loadOrInitializeWorkspace(nextConnection)
       const workspace = normalizeWorkspace(loaded.workspace)
@@ -819,6 +949,11 @@ function App() {
       return
     }
 
+    if (!canContribute) {
+      setSaveError('Your Conlab role is read-only. You cannot create buckets.')
+      return
+    }
+
     const bucket: Bucket = {
       id: generateBucketId(name),
       name,
@@ -857,10 +992,15 @@ function App() {
       return
     }
 
+    if (!canContribute) {
+      setSaveError('Your Conlab role is read-only. You cannot propose content.')
+      return
+    }
+
     const contentEvent: ContentEvent = {
       id: generateEventId(),
       bucketId: selectedBucket.id,
-      author: 'You',
+      author: eventAuthor,
       body: contentBody.trim(),
       comment: contentComment.trim(),
       action: changeAction,
@@ -904,6 +1044,11 @@ function App() {
   }
 
   async function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
+    if (!canReview) {
+      setSaveError('Your Conlab role must be reviewer to accept or reject events.')
+      return
+    }
+
     await saveWorkspace(`${status} event ${eventId}`, (workspace) => {
       const targetEvent = workspace.events.find((event) => event.id === eventId)
 
@@ -991,6 +1136,22 @@ function App() {
           <p className="repo-link">
             {connection.provider === 'github' ? 'GitHub' : 'GitLab'} · {connection.displayName} · {connection.branch}
           </p>
+          {access ? (
+            <dl className="access-summary" aria-label="Current access">
+              <div>
+                <dt>User</dt>
+                <dd>{getDisplayUserName(access.user)}</dd>
+              </div>
+              <div>
+                <dt>Git role</dt>
+                <dd>{access.providerRole}</dd>
+              </div>
+              <div>
+                <dt>Conlab role</dt>
+                <dd>{access.conlabRole}</dd>
+              </div>
+            </dl>
+          ) : null}
           <button className="secondary-button" onClick={disconnectGitRepo} type="button">
             Disconnect
           </button>
@@ -1002,6 +1163,7 @@ function App() {
           <label>
             Bucket name
             <input
+              disabled={isSaving || !canContribute}
               value={bucketName}
               onChange={(event) => setBucketName(event.target.value)}
               placeholder="e.g. Customer Signals"
@@ -1010,14 +1172,18 @@ function App() {
           <label>
             Description
             <textarea
+              disabled={isSaving || !canContribute}
               value={bucketDescription}
               onChange={(event) => setBucketDescription(event.target.value)}
               placeholder="What text are we trying to create here?"
               rows={3}
             />
           </label>
-          <button disabled={isSaving} type="submit">Create bucket</button>
+          <button disabled={isSaving || !canContribute} type="submit">Create bucket</button>
         </form>
+        {!canContribute ? (
+          <p className="permission-note">Read-only users can inspect buckets and event history.</p>
+        ) : null}
 
         <nav className="bucket-list">
           {buckets.map((bucket) => {
@@ -1103,7 +1269,7 @@ function App() {
             </section>
 
             <form className="content-form" onSubmit={proposeContent}>
-              <fieldset className="change-action-group" disabled={Boolean(pendingEvent)}>
+              <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute}>
                 <legend>Change action</legend>
                 <label>
                   <input
@@ -1138,7 +1304,7 @@ function App() {
               <label>
                 Change target
                 <select
-                  disabled={Boolean(pendingEvent)}
+                  disabled={Boolean(pendingEvent) || !canContribute}
                   onChange={(event) => selectBaseEvent(event.target.value)}
                   value={selectedBaseEventId}
                 >
@@ -1159,7 +1325,7 @@ function App() {
                     ? `Revise content from ${selectedBaseEventId}`
                     : 'Add proposed content'}
                 <textarea
-                  disabled={Boolean(pendingEvent) || changeAction === 'Delete'}
+                  disabled={Boolean(pendingEvent) || !canContribute || changeAction === 'Delete'}
                   onChange={(event) => setContentBody(event.target.value)}
                   placeholder={
                     pendingEvent
@@ -1179,7 +1345,7 @@ function App() {
               <label>
                 Comment
                 <textarea
-                  disabled={Boolean(pendingEvent)}
+                  disabled={Boolean(pendingEvent) || !canContribute}
                   onChange={(event) => setContentComment(event.target.value)}
                   placeholder={
                     pendingEvent
@@ -1193,6 +1359,7 @@ function App() {
               <button
                   disabled={
                   isSaving ||
+                  !canContribute ||
                   Boolean(pendingEvent) ||
                   (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
                   (changeAction !== 'Create' && !selectedBaseEventId) ||
@@ -1202,6 +1369,9 @@ function App() {
               >
                 Propose content
               </button>
+              {!canContribute ? (
+                <p className="permission-note">Your Conlab role is read-only. You can view this bucket but cannot propose changes.</p>
+              ) : null}
             </form>
 
             <section className="event-log" aria-label="Event log">
@@ -1241,14 +1411,14 @@ function App() {
                       {event.status === 'Proposed' ? (
                         <span className="decision-actions">
                           <button
-                            disabled={isSaving}
+                            disabled={isSaving || !canReview}
                             onClick={() => decideEvent(event.id, 'Rejected')}
                             type="button"
                           >
                             Reject
                           </button>
                           <button
-                            disabled={isSaving}
+                            disabled={isSaving || !canReview}
                             onClick={() => decideEvent(event.id, 'Accepted')}
                             type="button"
                           >
