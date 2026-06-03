@@ -16,17 +16,50 @@ type Workspace = {
   events: ContentEvent[]
 }
 
+type GitProvider = 'github' | 'gitlab'
+
 type GitHubRepo = {
   owner: string
   repo: string
 }
 
-type GitHubConnection = GitHubRepo & {
+type GitConnectionBase = {
+  provider: GitProvider
   repoUrl: string
   token: string
   branch: string
+  displayName: string
   useBranchInCommits: boolean
 }
+
+type GitHubConnection = GitConnectionBase &
+  GitHubRepo & {
+    provider: 'github'
+  }
+
+type GitLabConnection = GitConnectionBase & {
+  provider: 'gitlab'
+  apiBaseUrl: string
+  projectPath: string
+}
+
+type GitConnection = GitHubConnection | GitLabConnection
+
+type ParsedGitHubRepo = GitHubRepo & {
+  provider: 'github'
+  repoUrl: string
+  displayName: string
+}
+
+type ParsedGitLabRepo = {
+  provider: 'gitlab'
+  apiBaseUrl: string
+  displayName: string
+  projectPath: string
+  repoUrl: string
+}
+
+type ParsedGitRepo = ParsedGitHubRepo | ParsedGitLabRepo
 
 type LoadedWorkspace = {
   workspace: Workspace
@@ -49,7 +82,8 @@ type ContentEvent = {
 }
 
 const WORKSPACE_FILE = 'conlab.json'
-const CONNECTION_STORAGE_KEY = 'conlab.githubConnection'
+const CONNECTION_STORAGE_KEY = 'conlab.gitConnection'
+const LEGACY_CONNECTION_STORAGE_KEY = 'conlab.githubConnection'
 
 const emptyWorkspace: Workspace = {
   version: 1,
@@ -95,19 +129,47 @@ function decodeBase64(value: string) {
   return new TextDecoder().decode(bytes)
 }
 
-function parseGitHubRepoUrl(repoUrl: string): GitHubRepo {
-  const normalizedUrl = repoUrl.trim().replace(/\.git$/, '')
-  const parsedUrl = new URL(normalizedUrl)
-  const [owner, repo] = parsedUrl.pathname.split('/').filter(Boolean)
-
-  if (parsedUrl.hostname !== 'github.com' || !owner || !repo) {
-    throw new Error('Use a GitHub repo URL like https://github.com/owner/repo')
-  }
-
-  return { owner, repo }
+function encodePathSegment(value: string) {
+  return encodeURIComponent(value)
 }
 
-async function githubRequest<T>(connection: GitHubConnection, path: string, init?: RequestInit) {
+function parseGitRepoUrl(repoUrl: string): ParsedGitRepo {
+  const normalizedUrl = repoUrl.trim().replace(/\.git$/, '')
+  const parsedUrl = new URL(normalizedUrl)
+  const pathSegments = parsedUrl.pathname.split('/').filter(Boolean)
+
+  if (parsedUrl.hostname === 'github.com') {
+    const [owner, repo] = pathSegments
+
+    if (!owner || !repo) {
+      throw new Error('Use a GitHub repo URL like https://github.com/owner/repo')
+    }
+
+    return {
+      provider: 'github',
+      owner,
+      repo,
+      displayName: `${owner}/${repo}`,
+      repoUrl: `https://github.com/${owner}/${repo}`,
+    }
+  }
+
+  if (pathSegments.length < 2) {
+    throw new Error('Use a GitLab repo URL like https://git.example.com/group/project')
+  }
+
+  const projectPath = pathSegments.join('/')
+
+  return {
+    provider: 'gitlab',
+    apiBaseUrl: `${parsedUrl.origin}/api/v4`,
+    displayName: projectPath,
+    projectPath,
+    repoUrl: `${parsedUrl.origin}/${projectPath}`,
+  }
+}
+
+async function gitHubRequest<T>(connection: GitHubConnection, path: string, init?: RequestInit) {
   const response = await fetch(`https://api.github.com${path}`, {
     ...init,
     headers: {
@@ -127,33 +189,107 @@ async function githubRequest<T>(connection: GitHubConnection, path: string, init
   return response.json() as Promise<T>
 }
 
-async function getDefaultBranch(connection: GitHubRepo & { repoUrl: string; token: string }) {
-  const repo = await githubRequest<{ default_branch?: string }>(
-    { ...connection, branch: 'main', useBranchInCommits: false },
-    `/repos/${connection.owner}/${connection.repo}`,
-  )
+async function gitLabRequest<T>(connection: GitLabConnection, path: string, init?: RequestInit) {
+  const response = await fetch(`${connection.apiBaseUrl}${path}`, {
+    ...init,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'PRIVATE-TOKEN': connection.token,
+      ...init?.headers,
+    },
+  })
 
-  return repo.default_branch || 'main'
+  if (!response.ok) {
+    const details = await response.json().catch(() => undefined)
+    const message =
+      typeof details?.message === 'string'
+        ? details.message
+        : JSON.stringify(details?.message ?? response.statusText)
+    throw new Error(message)
+  }
+
+  return response.json() as Promise<T>
 }
 
-async function loadWorkspaceFile(connection: GitHubConnection) {
-  const file = await githubRequest<{ content: string; sha: string }>(
+async function getDefaultBranch(connection: ParsedGitRepo & { token: string }) {
+  if (connection.provider === 'github') {
+    const repo = await gitHubRequest<{ default_branch?: string }>(
+      { ...connection, branch: 'main', useBranchInCommits: false },
+      `/repos/${connection.owner}/${connection.repo}`,
+    )
+
+    return repo.default_branch || 'main'
+  }
+
+  const project = await gitLabRequest<{ default_branch?: string | null }>(
+    { ...connection, branch: 'main', useBranchInCommits: false },
+    `/projects/${encodePathSegment(connection.projectPath)}`,
+  )
+
+  return project.default_branch || 'main'
+}
+
+async function loadWorkspaceFile(connection: GitConnection) {
+  if (connection.provider === 'github') {
+    const file = await gitHubRequest<{ content: string; sha: string }>(
+      connection,
+      `/repos/${connection.owner}/${connection.repo}/contents/${WORKSPACE_FILE}?ref=${encodePathSegment(connection.branch)}`,
+    )
+
+    return {
+      workspace: JSON.parse(decodeBase64(file.content)) as Workspace,
+      sha: file.sha,
+    }
+  }
+
+  const file = await gitLabRequest<{ content: string; last_commit_id?: string }>(
     connection,
-    `/repos/${connection.owner}/${connection.repo}/contents/${WORKSPACE_FILE}?ref=${connection.branch}`,
+    `/projects/${encodePathSegment(connection.projectPath)}/repository/files/${encodePathSegment(WORKSPACE_FILE)}?ref=${encodePathSegment(connection.branch)}`,
   )
 
   return {
     workspace: JSON.parse(decodeBase64(file.content)) as Workspace,
-    sha: file.sha,
+    sha: file.last_commit_id,
   }
 }
 
 async function commitWorkspaceFile(
-  connection: GitHubConnection,
+  connection: GitConnection,
   workspace: Workspace,
   message: string,
   sha?: string,
 ) {
+  if (connection.provider === 'gitlab') {
+    const body: {
+      branch: string
+      commit_message: string
+      content: string
+      encoding: 'base64'
+      last_commit_id?: string
+    } = {
+      branch: connection.branch,
+      commit_message: message,
+      content: encodeBase64(`${JSON.stringify(workspace, null, 2)}\n`),
+      encoding: 'base64',
+    }
+
+    if (sha) {
+      body.last_commit_id = sha
+    }
+
+    const result = await gitLabRequest<{ last_commit_id?: string; commit_id?: string }>(
+      connection,
+      `/projects/${encodePathSegment(connection.projectPath)}/repository/files/${encodePathSegment(WORKSPACE_FILE)}`,
+      {
+        method: sha ? 'PUT' : 'POST',
+        body: JSON.stringify(body),
+      },
+    )
+
+    return result.last_commit_id ?? result.commit_id
+  }
+
   const body: {
     message: string
     content: string
@@ -172,7 +308,7 @@ async function commitWorkspaceFile(
     body.sha = sha
   }
 
-  const result = await githubRequest<{ content?: { sha?: string } }>(
+  const result = await gitHubRequest<{ content?: { sha?: string } }>(
     connection,
     `/repos/${connection.owner}/${connection.repo}/contents/${WORKSPACE_FILE}`,
     {
@@ -184,7 +320,7 @@ async function commitWorkspaceFile(
   return result.content?.sha
 }
 
-async function loadOrInitializeWorkspace(connection: GitHubConnection) {
+async function loadOrInitializeWorkspace(connection: GitConnection) {
   try {
     return await loadWorkspaceFile(connection)
   } catch (error) {
@@ -210,22 +346,61 @@ function shouldInitializeWorkspace(error: unknown) {
     return false
   }
 
-  return error.message === 'Not Found' || error.message === 'This repository is empty.'
+  return (
+    error.message === 'Not Found' ||
+    error.message === 'This repository is empty.' ||
+    error.message.includes('404 File Not Found')
+  )
 }
 
 function getStoredConnection() {
-  const storedConnection = localStorage.getItem(CONNECTION_STORAGE_KEY)
+  const storedConnection =
+    localStorage.getItem(CONNECTION_STORAGE_KEY) ??
+    localStorage.getItem(LEGACY_CONNECTION_STORAGE_KEY)
 
   if (!storedConnection) {
     return undefined
   }
 
   try {
-    return JSON.parse(storedConnection) as GitHubConnection
+    const parsedConnection = JSON.parse(storedConnection) as Partial<GitConnection> &
+      Partial<GitHubConnection>
+
+    if (parsedConnection.provider) {
+      return parsedConnection as GitConnection
+    }
+
+    if (parsedConnection.owner && parsedConnection.repo && parsedConnection.repoUrl && parsedConnection.token) {
+      return {
+        ...parsedConnection,
+        provider: 'github',
+        branch: parsedConnection.branch ?? 'main',
+        displayName: `${parsedConnection.owner}/${parsedConnection.repo}`,
+        useBranchInCommits: Boolean(parsedConnection.useBranchInCommits),
+      } as GitConnection
+    }
+
+    return undefined
   } catch {
     localStorage.removeItem(CONNECTION_STORAGE_KEY)
+    localStorage.removeItem(LEGACY_CONNECTION_STORAGE_KEY)
     return undefined
   }
+}
+
+function shouldRetryCommitConflict(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false
+  }
+
+  const message = error.message.toLowerCase()
+
+  return (
+    message.includes('sha') ||
+    message.includes('last_commit_id') ||
+    message.includes('changed since') ||
+    message.includes('branch was updated')
+  )
 }
 
 function getEventAction(event: ContentEvent): EventAction {
@@ -376,7 +551,7 @@ function MarkdownText({ className, text }: { className?: string; text: string })
 
 function App() {
   const [storedConnection] = useState(getStoredConnection)
-  const [connection, setConnection] = useState<GitHubConnection | null>(null)
+  const [connection, setConnection] = useState<GitConnection | null>(null)
   const [repoUrl, setRepoUrl] = useState(storedConnection?.repoUrl ?? '')
   const [token, setToken] = useState(storedConnection?.token ?? '')
   const [branchInput, setBranchInput] = useState(
@@ -431,7 +606,7 @@ function App() {
     return workspace
   }
 
-  async function loadConsistentWorkspace(activeConnection: GitHubConnection) {
+  async function loadConsistentWorkspace(activeConnection: GitConnection) {
     const cached = syncedWorkspaceRef.current
     const waits = [0, 300, 800, 1500]
     let loaded: LoadedWorkspace | undefined
@@ -459,26 +634,31 @@ function App() {
     return loaded ?? { workspace: emptyWorkspace }
   }
 
-  async function connectToGitHub(event: FormEvent<HTMLFormElement>) {
+  async function connectToGitRepo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setConnectionError('')
     setSaveError('')
     setIsConnecting(true)
 
     try {
-      const repo = parseGitHubRepoUrl(repoUrl)
-      const baseConnection = {
-        ...repo,
-        repoUrl: repoUrl.trim(),
-        token: token.trim(),
-      }
+      const repo = parseGitRepoUrl(repoUrl)
       const requestedBranch = branchInput.trim()
-      const branch = requestedBranch || (await getDefaultBranch(baseConnection))
-      const nextConnection: GitHubConnection = {
-        ...baseConnection,
-        branch,
-        useBranchInCommits: Boolean(requestedBranch),
-      }
+      const trimmedToken = token.trim()
+      const branch = requestedBranch || (await getDefaultBranch({ ...repo, token: trimmedToken }))
+      const nextConnection: GitConnection =
+        repo.provider === 'github'
+          ? {
+              ...repo,
+              token: trimmedToken,
+              branch,
+              useBranchInCommits: Boolean(requestedBranch),
+            }
+          : {
+              ...repo,
+              token: trimmedToken,
+              branch,
+              useBranchInCommits: Boolean(requestedBranch),
+            }
 
       const loaded = await loadOrInitializeWorkspace(nextConnection)
       const workspace = normalizeWorkspace(loaded.workspace)
@@ -487,8 +667,9 @@ function App() {
 
       setConnection(nextConnection)
       localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(nextConnection))
+      localStorage.removeItem(LEGACY_CONNECTION_STORAGE_KEY)
     } catch (error) {
-      setConnectionError(error instanceof Error ? error.message : 'Could not connect to GitHub')
+      setConnectionError(error instanceof Error ? error.message : 'Could not connect to Git repo')
     } finally {
       setIsConnecting(false)
     }
@@ -523,7 +704,7 @@ function App() {
           }
           break
         } catch (error) {
-          if (attempt === 0 && error instanceof Error && error.message.includes('sha')) {
+          if (attempt === 0 && shouldRetryCommitConflict(error)) {
             continue
           }
 
@@ -542,15 +723,16 @@ function App() {
         applyLoadedWorkspace(lastLoaded)
       }
 
-      setSaveError(error instanceof Error ? error.message : 'Could not save to GitHub')
+      setSaveError(error instanceof Error ? error.message : 'Could not save to Git repo')
       return false
     } finally {
       setIsSaving(false)
     }
   }
 
-  function disconnectGitHub() {
+  function disconnectGitRepo() {
     localStorage.removeItem(CONNECTION_STORAGE_KEY)
+    localStorage.removeItem(LEGACY_CONNECTION_STORAGE_KEY)
     setConnection(null)
     setRepoUrl('')
     setToken('')
@@ -727,26 +909,26 @@ function App() {
       <main className="setup-shell">
         <section className="setup-panel">
           <p className="eyebrow">Install Workspace</p>
-          <h1>Connect a GitHub repo</h1>
+          <h1>Connect a Git repo</h1>
           <p>
-            Paste an empty or existing GitHub repository URL and a PAT with repository contents
-            read/write access. The app will create or load {WORKSPACE_FILE}.
+            Paste an empty or existing GitHub or GitLab repository URL and an access token with
+            repository contents read/write access. The app will create or load {WORKSPACE_FILE}.
           </p>
 
-          <form className="setup-form" onSubmit={connectToGitHub}>
+          <form className="setup-form" onSubmit={connectToGitRepo}>
             <label>
-              GitHub repo URL
+              Git repo URL
               <input
                 onChange={(event) => setRepoUrl(event.target.value)}
-                placeholder="https://github.com/owner/repo"
+                placeholder="https://github.com/owner/repo or https://git.example.com/group/project"
                 value={repoUrl}
               />
             </label>
             <label>
-              GitHub PAT
+              Access token
               <input
                 onChange={(event) => setToken(event.target.value)}
-                placeholder="ghp_... or github_pat_..."
+                placeholder="GitHub PAT or GitLab project/personal access token"
                 type="password"
                 value={token}
               />
@@ -776,12 +958,12 @@ function App() {
           <p className="eyebrow">Level 1 MVP</p>
           <h1>Contribution Ledger</h1>
           <p className="repo-link">
-            {connection.owner}/{connection.repo} · {connection.branch}
+            {connection.provider === 'github' ? 'GitHub' : 'GitLab'} · {connection.displayName} · {connection.branch}
           </p>
-          <button className="secondary-button" onClick={disconnectGitHub} type="button">
+          <button className="secondary-button" onClick={disconnectGitRepo} type="button">
             Disconnect
           </button>
-          {isSaving ? <p className="save-state">Saving to GitHub...</p> : null}
+          {isSaving ? <p className="save-state">Saving to Git...</p> : null}
           {saveError ? <p className="error-text">{saveError}</p> : null}
         </div>
 

@@ -13,7 +13,7 @@ const token = getTestToken()
 let branchName = ''
 
 async function waitForWorkspaceCommit(page: Page, action: () => Promise<void>) {
-  await expect(page.getByText('Saving to GitHub...')).not.toBeVisible()
+  await expect(page.getByText('Saving to Git...')).not.toBeVisible()
   const responsePromise = page.waitForResponse(
     (response) =>
       response.request().method() === 'PUT' &&
@@ -26,7 +26,7 @@ async function waitForWorkspaceCommit(page: Page, action: () => Promise<void>) {
     throw new Error(`${error instanceof Error ? error.message : 'No commit response'}; UI errors: ${errors.join(' | ')}`)
   })
   expect(response.ok()).toBeTruthy()
-  await expect(page.getByText('Saving to GitHub...')).not.toBeVisible()
+  await expect(page.getByText('Saving to Git...')).not.toBeVisible()
 }
 
 function eventCard(page: Page, eventId: string) {
@@ -59,15 +59,15 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   await page.addInitScript(() => localStorage.clear())
   await page.goto('/')
 
-  await page.getByLabel('GitHub repo URL').fill(repo.repoUrl)
-  await page.getByLabel('GitHub PAT').fill(token)
+  await page.getByLabel('Git repo URL').fill(repo.repoUrl)
+  await page.getByLabel('Access token').fill(token)
   await page.getByLabel('Branch').fill(branchName)
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Connect workspace' }).click(),
   )
 
   await expect(page.getByRole('heading', { name: 'Contribution Ledger' })).toBeVisible()
-  await expect(page.getByText(`${repo.owner}/${repo.repo} · ${branchName}`)).toBeVisible()
+  await expect(page.getByText(`GitHub · ${repo.owner}/${repo.repo} · ${branchName}`)).toBeVisible()
 
   await page.getByLabel('Bucket name').fill('Problem Space')
   await page.getByLabel('Description').fill('Customer pains and market triggers for the offer.')
