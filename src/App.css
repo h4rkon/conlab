@@ -132,7 +132,8 @@
 }
 
 .bucket-form,
-.content-form {
+.content-form,
+.bucket-settings {
   display: grid;
   gap: 12px;
 }
@@ -144,6 +145,17 @@ label {
   font-weight: 700;
   gap: 6px;
   text-align: left;
+}
+
+.checkbox-label {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  font-weight: 700;
+}
+
+.checkbox-label input {
+  min-width: auto;
 }
 
 input,
@@ -212,6 +224,15 @@ button:disabled {
 
 .secondary-button:hover {
   background: #f9fafb;
+}
+
+.danger-button {
+  background: #b42318;
+  border-color: #b42318;
+}
+
+.danger-button:hover {
+  background: #912018;
 }
 
 .repo-link,
@@ -514,12 +535,19 @@ button:disabled {
 }
 
 .accepted-text,
+.bucket-settings,
 .content-form,
 .event-log {
   background: #ffffff;
   border: 1px solid #dfe4ea;
   border-radius: 8px;
   padding: 18px;
+}
+
+.settings-actions {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .section-title {

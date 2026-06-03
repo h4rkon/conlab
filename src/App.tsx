@@ -8,6 +8,9 @@ type Bucket = {
   id: string
   name: string
   description: string
+  requiresReview: boolean
+  status: 'active' | 'archived'
+  archivedAt?: string
 }
 
 type Workspace = {
@@ -108,7 +111,11 @@ const emptyWorkspace: Workspace = {
 function normalizeWorkspace(workspace?: Partial<Workspace>): Workspace {
   return {
     version: 1,
-    buckets: [...(workspace?.buckets ?? [])],
+    buckets: (workspace?.buckets ?? []).map((bucket) => ({
+      ...bucket,
+      requiresReview: bucket.requiresReview ?? true,
+      status: bucket.status ?? 'active',
+    })),
     events: [...(workspace?.events ?? [])],
   }
 }
@@ -664,6 +671,20 @@ function generateBucketId(name: string) {
   return `${slug}-${timestamp}`
 }
 
+function getTimestampLabel() {
+  return new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+}
+
+function getArchivedBucketName(name: string) {
+  const safeName = name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '_')
+
+  return `archived_${safeName}_${getTimestampLabel()}`
+}
+
+function getBranchOverride() {
+  return new URLSearchParams(window.location.search).get('branch')?.trim() ?? ''
+}
+
 function delay(milliseconds: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, milliseconds)
@@ -704,9 +725,6 @@ function App() {
   const [connection, setConnection] = useState<GitConnection | null>(null)
   const [repoUrl, setRepoUrl] = useState(storedConnection?.repoUrl ?? '')
   const [token, setToken] = useState(storedConnection?.token ?? '')
-  const [branchInput, setBranchInput] = useState(
-    storedConnection?.useBranchInCommits ? storedConnection.branch : '',
-  )
   const [isConnecting, setIsConnecting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [connectionError, setConnectionError] = useState('')
@@ -716,6 +734,10 @@ function App() {
   const [selectedBucketId, setSelectedBucketId] = useState('')
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
+  const [bucketRequiresReview, setBucketRequiresReview] = useState(true)
+  const [bucketSettingsName, setBucketSettingsName] = useState('')
+  const [bucketSettingsDescription, setBucketSettingsDescription] = useState('')
+  const [bucketSettingsRequiresReview, setBucketSettingsRequiresReview] = useState(true)
   const [changeAction, setChangeAction] = useState<EventAction>('Create')
   const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
@@ -741,7 +763,15 @@ function App() {
   const conlabRole = access?.conlabRole ?? 'read-only'
   const canContribute = conlabRole === 'contributor' || conlabRole === 'reviewer' || conlabRole === 'admin'
   const canReview = conlabRole === 'reviewer' || conlabRole === 'admin'
+  const canAdmin = conlabRole === 'admin'
+  const selectedBucketIsActive = selectedBucket?.status !== 'archived'
   const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
+
+  function syncBucketSettings(bucket?: Bucket) {
+    setBucketSettingsName(bucket?.name ?? '')
+    setBucketSettingsDescription(bucket?.description ?? '')
+    setBucketSettingsRequiresReview(bucket?.requiresReview ?? true)
+  }
 
   function applyLoadedWorkspace(loaded: LoadedWorkspace, preferredBucketId = selectedBucketId) {
     const workspace = normalizeWorkspace(loaded.workspace)
@@ -757,6 +787,7 @@ function App() {
     setEvents(workspace.events)
     setSelectedBucketId(nextBucketId)
     setHistoryAcceptedCount(countAcceptedEvents(workspace.events, nextBucketId))
+    syncBucketSettings(workspace.buckets.find((bucket) => bucket.id === nextBucketId))
 
     return workspace
   }
@@ -797,7 +828,7 @@ function App() {
 
     try {
       const repo = parseGitRepoUrl(repoUrl)
-      const requestedBranch = branchInput.trim()
+      const requestedBranch = getBranchOverride()
       const trimmedToken = normalizeTokenInput(token)
       const branch = requestedBranch || (await getDefaultBranch({ ...repo, token: trimmedToken }))
       const baseConnection: GitConnection =
@@ -896,10 +927,10 @@ function App() {
     setConnection(null)
     setRepoUrl('')
     setToken('')
-    setBranchInput('')
     setBuckets([])
     setEvents([])
     setSelectedBucketId('')
+    syncBucketSettings()
     syncedWorkspaceRef.current = null
   }
 
@@ -910,6 +941,7 @@ function App() {
     setContentBody('')
     setContentComment('')
     setHistoryAcceptedCount(countAcceptedEvents(events, bucketId))
+    syncBucketSettings(buckets.find((bucket) => bucket.id === bucketId))
   }
 
   function selectBaseEvent(eventId: string) {
@@ -953,8 +985,8 @@ function App() {
       return
     }
 
-    if (!canContribute) {
-      setSaveError('Your Conlab role is read-only. You cannot create buckets.')
+    if (!canAdmin) {
+      setSaveError('Your Conlab role must be admin to create buckets.')
       return
     }
 
@@ -962,6 +994,8 @@ function App() {
       id: generateBucketId(name),
       name,
       description,
+      requiresReview: bucketRequiresReview,
+      status: 'active',
     }
 
     const saved = await saveWorkspace(`Create bucket ${name}`, (workspace) => ({
@@ -975,7 +1009,9 @@ function App() {
 
     setBucketName('')
     setBucketDescription('')
+    setBucketRequiresReview(true)
     setSelectedBucketId(bucket.id)
+    syncBucketSettings(bucket)
     setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
@@ -988,6 +1024,7 @@ function App() {
 
     if (
       !selectedBucket ||
+      !selectedBucketIsActive ||
       pendingEvent ||
       (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
       (changeAction !== 'Create' && !selectedBaseEventId) ||
@@ -1001,6 +1038,7 @@ function App() {
       return
     }
 
+    const createdAt = new Date().toISOString()
     const contentEvent: ContentEvent = {
       id: generateEventId(),
       bucketId: selectedBucket.id,
@@ -1009,31 +1047,42 @@ function App() {
       comment: contentComment.trim(),
       action: changeAction,
       baseEventId: selectedBaseEventId || undefined,
-      status: 'Proposed',
-      createdAt: new Date().toISOString(),
+      status: selectedBucket.requiresReview ? 'Proposed' : 'Accepted',
+      createdAt,
+      decidedAt: selectedBucket.requiresReview ? undefined : createdAt,
     }
 
-    const saved = await saveWorkspace(`Propose ${changeAction.toLowerCase()} ${contentEvent.id}`, (workspace) => {
-      const bucketExists = workspace.buckets.some((bucket) => bucket.id === selectedBucket.id)
+    const saved = await saveWorkspace(`${contentEvent.status === 'Accepted' ? 'Accept' : 'Propose'} ${changeAction.toLowerCase()} ${contentEvent.id}`, (workspace) => {
+      const latestBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
 
-      if (!bucketExists) {
+      if (!latestBucket) {
         throw new Error('The selected bucket no longer exists. Latest workspace was loaded.')
       }
 
-      if (workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
+      if (latestBucket.status === 'archived') {
+        throw new Error('This bucket is archived. It cannot accept new content.')
+      }
+
+      if (latestBucket.requiresReview && workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
         throw new Error('This bucket already has a proposed event in the latest workspace.')
       }
 
+      const latestEvent = {
+        ...contentEvent,
+        status: latestBucket.requiresReview ? 'Proposed' : 'Accepted',
+        decidedAt: latestBucket.requiresReview ? undefined : contentEvent.createdAt,
+      } satisfies ContentEvent
+
       if (
-        contentEvent.baseEventId &&
-        !workspace.events.some((event) => event.id === contentEvent.baseEventId)
+        latestEvent.baseEventId &&
+        !workspace.events.some((event) => event.id === latestEvent.baseEventId)
       ) {
         throw new Error('The selected target event no longer exists in the latest workspace.')
       }
 
       return {
         ...workspace,
-        events: [contentEvent, ...workspace.events],
+        events: [latestEvent, ...workspace.events],
       }
     })
 
@@ -1079,6 +1128,92 @@ function App() {
     })
   }
 
+  async function updateBucketSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+
+    if (!selectedBucket) {
+      return
+    }
+
+    if (!canAdmin) {
+      setSaveError('Your Conlab role must be admin to change bucket settings.')
+      return
+    }
+
+    const name = bucketSettingsName.trim()
+    const description = bucketSettingsDescription.trim()
+
+    if (!name || !description) {
+      return
+    }
+
+    await saveWorkspace(`Update bucket ${selectedBucket.id}`, (workspace) => {
+      const targetBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
+
+      if (!targetBucket) {
+        throw new Error('The selected bucket no longer exists in the latest workspace.')
+      }
+
+      if (targetBucket.status === 'archived') {
+        throw new Error('Archived buckets cannot be changed.')
+      }
+
+      return {
+        ...workspace,
+        buckets: workspace.buckets.map((bucket) =>
+          bucket.id === selectedBucket.id
+            ? {
+                ...bucket,
+                name,
+                description,
+                requiresReview: bucketSettingsRequiresReview,
+              }
+            : bucket,
+        ),
+      }
+    })
+  }
+
+  async function archiveBucket() {
+    if (!selectedBucket) {
+      return
+    }
+
+    if (!canAdmin) {
+      setSaveError('Your Conlab role must be admin to archive buckets.')
+      return
+    }
+
+    const archivedAt = new Date().toISOString()
+    const archivedName = getArchivedBucketName(selectedBucket.name)
+
+    await saveWorkspace(`Archive bucket ${selectedBucket.id}`, (workspace) => {
+      const targetBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
+
+      if (!targetBucket) {
+        throw new Error('The selected bucket no longer exists in the latest workspace.')
+      }
+
+      if (targetBucket.status === 'archived') {
+        throw new Error('This bucket is already archived.')
+      }
+
+      return {
+        ...workspace,
+        buckets: workspace.buckets.map((bucket) =>
+          bucket.id === selectedBucket.id
+            ? {
+                ...bucket,
+                name: archivedName,
+                status: 'archived',
+                archivedAt,
+              }
+            : bucket,
+        ),
+      }
+    })
+  }
+
   if (!connection) {
     return (
       <main aria-busy={isConnecting} className={isConnecting ? 'setup-shell is-busy' : 'setup-shell'}>
@@ -1109,15 +1244,6 @@ function App() {
                 placeholder="GitHub PAT or GitLab project/personal access token"
                 type="password"
                 value={token}
-              />
-            </label>
-            <label>
-              Branch
-              <input
-                disabled={isConnecting}
-                onChange={(event) => setBranchInput(event.target.value)}
-                placeholder="Leave blank for default branch"
-                value={branchInput}
               />
             </label>
             {connectionError ? <p className="error-text">{connectionError}</p> : null}
@@ -1167,7 +1293,7 @@ function App() {
           <label>
             Bucket name
             <input
-              disabled={isSaving || !canContribute}
+              disabled={isSaving || !canAdmin}
               value={bucketName}
               onChange={(event) => setBucketName(event.target.value)}
               placeholder="e.g. Customer Signals"
@@ -1176,17 +1302,26 @@ function App() {
           <label>
             Description
             <textarea
-              disabled={isSaving || !canContribute}
+              disabled={isSaving || !canAdmin}
               value={bucketDescription}
               onChange={(event) => setBucketDescription(event.target.value)}
               placeholder="What text are we trying to create here?"
               rows={3}
             />
           </label>
-          <button disabled={isSaving || !canContribute} type="submit">Create bucket</button>
+          <label className="checkbox-label">
+            <input
+              checked={bucketRequiresReview}
+              disabled={isSaving || !canAdmin}
+              onChange={(event) => setBucketRequiresReview(event.target.checked)}
+              type="checkbox"
+            />
+            Require reviewer acceptance for content
+          </label>
+          <button disabled={isSaving || !canAdmin} type="submit">Create bucket</button>
         </form>
-        {!canContribute ? (
-          <p className="permission-note">Read-only users can inspect buckets and event history.</p>
+        {!canAdmin ? (
+          <p className="permission-note">Only admins can create and configure buckets.</p>
         ) : null}
 
         <nav className="bucket-list">
@@ -1205,7 +1340,13 @@ function App() {
                   <strong>{bucket.name}</strong>
                   <MarkdownText className="bucket-description" text={bucket.description} />
                 </span>
-                <em>{hasPending ? 'Needs acceptance' : `${bucketEvents.length} events`}</em>
+                <em>
+                  {bucket.status === 'archived'
+                    ? 'Archived'
+                    : hasPending
+                      ? 'Needs acceptance'
+                      : `${bucketEvents.length} events`}
+                </em>
               </button>
             )
           })}
@@ -1222,9 +1363,71 @@ function App() {
                 <MarkdownText className="workspace-description" text={selectedBucket.description} />
               </div>
               <span className={pendingEvent ? 'status pending' : 'status open'}>
-                {pendingEvent ? 'Acceptance pending' : 'Open for content'}
+                {selectedBucket.status === 'archived'
+                  ? 'Archived'
+                  : pendingEvent
+                    ? 'Acceptance pending'
+                    : selectedBucket.requiresReview
+                      ? 'Review required'
+                      : 'Auto-accepting content'}
               </span>
             </header>
+
+            {canAdmin ? (
+              <form className="bucket-settings" onSubmit={updateBucketSettings}>
+                <div className="section-title">
+                  <h3>Bucket Settings</h3>
+                  <span>{selectedBucket.status === 'archived' ? 'Archived' : 'Admin'}</span>
+                </div>
+                <label>
+                  Bucket name
+                  <input
+                    disabled={isSaving || selectedBucket.status === 'archived'}
+                    onChange={(event) => setBucketSettingsName(event.target.value)}
+                    value={bucketSettingsName}
+                  />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    disabled={isSaving || selectedBucket.status === 'archived'}
+                    onChange={(event) => setBucketSettingsDescription(event.target.value)}
+                    rows={3}
+                    value={bucketSettingsDescription}
+                  />
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    checked={bucketSettingsRequiresReview}
+                    disabled={isSaving || selectedBucket.status === 'archived'}
+                    onChange={(event) => setBucketSettingsRequiresReview(event.target.checked)}
+                    type="checkbox"
+                  />
+                  Require reviewer acceptance for content
+                </label>
+                <div className="settings-actions">
+                  <button
+                    disabled={
+                      isSaving ||
+                      selectedBucket.status === 'archived' ||
+                      !bucketSettingsName.trim() ||
+                      !bucketSettingsDescription.trim()
+                    }
+                    type="submit"
+                  >
+                    Save settings
+                  </button>
+                  <button
+                    className="danger-button"
+                    disabled={isSaving || selectedBucket.status === 'archived'}
+                    onClick={archiveBucket}
+                    type="button"
+                  >
+                    Archive bucket
+                  </button>
+                </div>
+              </form>
+            ) : null}
 
             <section className="accepted-text" aria-label="Accepted text">
               <div className="section-title">
@@ -1273,7 +1476,7 @@ function App() {
             </section>
 
             <form className="content-form" onSubmit={proposeContent}>
-              <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute}>
+              <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}>
                 <legend>Change action</legend>
                 <label>
                   <input
@@ -1308,7 +1511,7 @@ function App() {
               <label>
                 Change target
                 <select
-                  disabled={Boolean(pendingEvent) || !canContribute}
+                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}
                   onChange={(event) => selectBaseEvent(event.target.value)}
                   value={selectedBaseEventId}
                 >
@@ -1329,7 +1532,7 @@ function App() {
                     ? `Revise content from ${selectedBaseEventId}`
                     : 'Add proposed content'}
                 <textarea
-                  disabled={Boolean(pendingEvent) || !canContribute || changeAction === 'Delete'}
+                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive || changeAction === 'Delete'}
                   onChange={(event) => setContentBody(event.target.value)}
                   placeholder={
                     pendingEvent
@@ -1349,7 +1552,7 @@ function App() {
               <label>
                 Comment
                 <textarea
-                  disabled={Boolean(pendingEvent) || !canContribute}
+                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}
                   onChange={(event) => setContentComment(event.target.value)}
                   placeholder={
                     pendingEvent
@@ -1364,6 +1567,7 @@ function App() {
                   disabled={
                   isSaving ||
                   !canContribute ||
+                  !selectedBucketIsActive ||
                   Boolean(pendingEvent) ||
                   (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
                   (changeAction !== 'Create' && !selectedBaseEventId) ||
@@ -1375,6 +1579,9 @@ function App() {
               </button>
               {!canContribute ? (
                 <p className="permission-note">Your Conlab role is read-only. You can view this bucket but cannot propose changes.</p>
+              ) : null}
+              {canContribute && !selectedBucketIsActive ? (
+                <p className="permission-note">This bucket is archived and does not accept new content.</p>
               ) : null}
             </form>
 

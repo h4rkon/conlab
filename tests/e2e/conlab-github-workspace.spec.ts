@@ -45,6 +45,10 @@ function commentField(page: Page) {
   return page.getByRole('textbox', { name: 'Comment' })
 }
 
+function bucketForm(page: Page) {
+  return page.locator('.bucket-form')
+}
+
 test.beforeAll(async () => {
   branchName = await createTestBranch(token, repo)
 })
@@ -57,11 +61,10 @@ test.afterAll(async () => {
 
 test('runs bucket CRUD and rendered history against an isolated GitHub branch', async ({ page }) => {
   await page.addInitScript(() => localStorage.clear())
-  await page.goto('/')
+  await page.goto(`/?branch=${branchName}`)
 
   await page.getByLabel('Git repo URL').fill(repo.repoUrl)
   await page.getByLabel('Access token').fill(token)
-  await page.getByLabel('Branch').fill(branchName)
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Connect workspace' }).click(),
   )
@@ -69,8 +72,8 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   await expect(page.getByRole('heading', { name: 'Contribution Ledger' })).toBeVisible()
   await expect(page.getByText(`GitHub · ${repo.owner}/${repo.repo} · ${branchName}`)).toBeVisible()
 
-  await page.getByLabel('Bucket name').fill('Problem Space')
-  await page.getByLabel('Description').fill('Customer pains and market triggers for the offer.')
+  await bucketForm(page).getByLabel('Bucket name').fill('Problem Space')
+  await bucketForm(page).getByLabel('Description').fill('Customer pains and market triggers for the offer.')
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Create bucket' }).click(),
   )
@@ -147,8 +150,34 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   await page.getByRole('button', { name: '>>' }).click()
   await expect(renderedBucket(page).getByText('Revised accepted content for bucket history.')).toBeVisible()
 
+  await bucketForm(page).getByLabel('Bucket name').fill('Auto Space')
+  await bucketForm(page).getByLabel('Description').fill('Automatically accepted content stream.')
+  await bucketForm(page).getByLabel('Require reviewer acceptance for content').uncheck()
+  await waitForWorkspaceCommit(page, () =>
+    page.getByRole('button', { name: 'Create bucket' }).click(),
+  )
+  await expect(page.getByRole('heading', { name: 'Auto Space' })).toBeVisible()
+  await page.getByLabel('Add proposed content').fill('Automatically accepted block for the bucket.')
+  await commentField(page).fill('auto accept')
+  await waitForWorkspaceCommit(page, () =>
+    page.getByRole('button', { name: 'Propose content' }).click(),
+  )
+  const autoEventId = await latestEventId(page)
+  await expect(eventCard(page, autoEventId)).toContainText('Accepted')
+  await expect(renderedBucket(page).getByText('Automatically accepted block for the bucket.')).toBeVisible()
+
+  await waitForWorkspaceCommit(page, () =>
+    page.getByRole('button', { name: 'Archive bucket' }).click(),
+  )
+  await expect(page.getByRole('heading', { name: /^archived_Auto_Space_\d{14}$/ })).toBeVisible()
+
   const workspace = await loadWorkspace(token, repo, branchName)
-  expect(workspace.buckets).toHaveLength(1)
+  expect(workspace.buckets).toHaveLength(2)
+  expect(workspace.buckets).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: expect.stringMatching(/^archived_Auto_Space_\d{14}$/), status: 'archived', requiresReview: false }),
+    ]),
+  )
   expect(workspace.events).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ id: createEventId, action: 'Create', status: 'Accepted' }),
@@ -156,6 +185,7 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
       expect.objectContaining({ id: rejectedEventId, action: 'Create', status: 'Rejected' }),
       expect.objectContaining({ id: deleteEventId, action: 'Delete', status: 'Accepted', baseEventId: reviseEventId }),
       expect.objectContaining({ id: restoreEventId, action: 'Delete', status: 'Accepted', baseEventId: deleteEventId }),
+      expect.objectContaining({ id: autoEventId, action: 'Create', status: 'Accepted' }),
     ]),
   )
 })
