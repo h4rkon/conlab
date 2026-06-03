@@ -17,7 +17,7 @@ type Workspace = {
 }
 
 type GitProvider = 'github' | 'gitlab'
-type ConlabRole = 'read-only' | 'contributor' | 'reviewer'
+type ConlabRole = 'read-only' | 'contributor' | 'reviewer' | 'admin'
 
 type GitUser = {
   id: string
@@ -276,7 +276,7 @@ function mapGitHubAccess(permissions?: {
   pull?: boolean
 }) {
   if (permissions?.admin) {
-    return { providerRole: 'admin', conlabRole: 'reviewer' as const }
+    return { providerRole: 'admin', conlabRole: 'admin' as const }
   }
 
   if (permissions?.maintain) {
@@ -299,8 +299,12 @@ function mapGitLabAccess(accessLevel?: number) {
     return { providerRole: 'none', conlabRole: 'read-only' as const }
   }
 
+  if (accessLevel >= 50) {
+    return { providerRole: 'owner', conlabRole: 'admin' as const }
+  }
+
   if (accessLevel >= 40) {
-    return { providerRole: accessLevel >= 50 ? 'owner' : 'maintainer', conlabRole: 'reviewer' as const }
+    return { providerRole: 'maintainer', conlabRole: 'reviewer' as const }
   }
 
   if (accessLevel >= 30) {
@@ -735,8 +739,8 @@ function App() {
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
   const access = connection?.access
   const conlabRole = access?.conlabRole ?? 'read-only'
-  const canContribute = conlabRole === 'contributor' || conlabRole === 'reviewer'
-  const canReview = conlabRole === 'reviewer'
+  const canContribute = conlabRole === 'contributor' || conlabRole === 'reviewer' || conlabRole === 'admin'
+  const canReview = conlabRole === 'reviewer' || conlabRole === 'admin'
   const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
 
   function applyLoadedWorkspace(loaded: LoadedWorkspace, preferredBucketId = selectedBucketId) {
