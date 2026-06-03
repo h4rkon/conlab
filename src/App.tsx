@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -26,6 +26,11 @@ type GitHubConnection = GitHubRepo & {
   useBranchInCommits: boolean
 }
 
+type LoadedWorkspace = {
+  workspace: Workspace
+  sha?: string
+}
+
 type EventAction = 'Create' | 'Revise' | 'Delete'
 
 type ContentEvent = {
@@ -48,6 +53,14 @@ const emptyWorkspace: Workspace = {
   version: 1,
   buckets: [],
   events: [],
+}
+
+function normalizeWorkspace(workspace?: Partial<Workspace>): Workspace {
+  return {
+    version: 1,
+    buckets: [...(workspace?.buckets ?? [])],
+    events: [...(workspace?.events ?? [])],
+  }
 }
 
 function formatDate(value: string) {
@@ -167,6 +180,27 @@ async function commitWorkspaceFile(
   )
 
   return result.content?.sha
+}
+
+async function loadOrInitializeWorkspace(connection: GitHubConnection) {
+  try {
+    return await loadWorkspaceFile(connection)
+  } catch (error) {
+    if (!shouldInitializeWorkspace(error)) {
+      throw error
+    }
+
+    const createdSha = await commitWorkspaceFile(
+      connection,
+      emptyWorkspace,
+      'Initialize Conlab workspace',
+    )
+
+    return {
+      workspace: emptyWorkspace,
+      sha: createdSha,
+    }
+  }
 }
 
 function shouldInitializeWorkspace(error: unknown) {
@@ -297,6 +331,39 @@ function countAcceptedEvents(events: ContentEvent[], bucketId: string) {
   return events.filter((event) => event.bucketId === bucketId && event.status === 'Accepted').length
 }
 
+function generateEventId() {
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+  const random =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID().slice(0, 8)
+      : Math.random().toString(36).slice(2, 10)
+
+  return `EV-${timestamp}-${random}`
+}
+
+function generateBucketId(name: string) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
+
+  return `${slug}-${timestamp}`
+}
+
+function delay(milliseconds: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, milliseconds)
+  })
+}
+
+function includesKnownWorkspace(latest: Workspace, known: Workspace) {
+  const bucketIds = new Set(latest.buckets.map((bucket) => bucket.id))
+  const eventIds = new Set(latest.events.map((event) => event.id))
+
+  return (
+    known.buckets.every((bucket) => bucketIds.has(bucket.id)) &&
+    known.events.every((event) => eventIds.has(event.id))
+  )
+}
+
 function App() {
   const [storedConnection] = useState(getStoredConnection)
   const [connection, setConnection] = useState<GitHubConnection | null>(null)
@@ -305,7 +372,6 @@ function App() {
   const [branchInput, setBranchInput] = useState(
     storedConnection?.useBranchInCommits ? storedConnection.branch : '',
   )
-  const [workspaceSha, setWorkspaceSha] = useState<string>()
   const [isConnecting, setIsConnecting] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [connectionError, setConnectionError] = useState('')
@@ -320,6 +386,7 @@ function App() {
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
   const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
+  const syncedWorkspaceRef = useRef<LoadedWorkspace | null>(null)
 
   const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId) ?? buckets[0]
 
@@ -335,6 +402,52 @@ function App() {
   const renderedEvents = getRenderedEvents(selectedEvents, appliedAcceptedCount)
   const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
+
+  function applyLoadedWorkspace(loaded: LoadedWorkspace, preferredBucketId = selectedBucketId) {
+    const workspace = normalizeWorkspace(loaded.workspace)
+    const nextBucketId = workspace.buckets.some((bucket) => bucket.id === preferredBucketId)
+      ? preferredBucketId
+      : workspace.buckets[0]?.id ?? ''
+
+    syncedWorkspaceRef.current = {
+      workspace,
+      sha: loaded.sha,
+    }
+    setBuckets(workspace.buckets)
+    setEvents(workspace.events)
+    setSelectedBucketId(nextBucketId)
+    setHistoryAcceptedCount(countAcceptedEvents(workspace.events, nextBucketId))
+
+    return workspace
+  }
+
+  async function loadConsistentWorkspace(activeConnection: GitHubConnection) {
+    const cached = syncedWorkspaceRef.current
+    const waits = [0, 300, 800, 1500]
+    let loaded: LoadedWorkspace | undefined
+
+    for (const wait of waits) {
+      if (wait) {
+        await delay(wait)
+      }
+
+      loaded = await loadOrInitializeWorkspace(activeConnection)
+      const workspace = normalizeWorkspace(loaded.workspace)
+
+      if (!cached || includesKnownWorkspace(workspace, cached.workspace)) {
+        return {
+          workspace,
+          sha: loaded.sha,
+        }
+      }
+    }
+
+    if (cached && loaded) {
+      return cached
+    }
+
+    return loaded ?? { workspace: emptyWorkspace }
+  }
 
   async function connectToGitHub(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -357,31 +470,10 @@ function App() {
         useBranchInCommits: Boolean(requestedBranch),
       }
 
-      try {
-        const loaded = await loadWorkspaceFile(nextConnection)
-        setBuckets(loaded.workspace.buckets ?? [])
-        setEvents(loaded.workspace.events ?? [])
-        setWorkspaceSha(loaded.sha)
-        const firstBucketId = loaded.workspace.buckets?.[0]?.id ?? ''
-        setSelectedBucketId(firstBucketId)
-        setHistoryAcceptedCount(countAcceptedEvents(loaded.workspace.events ?? [], firstBucketId))
-      } catch (error) {
-        if (!shouldInitializeWorkspace(error)) {
-          throw error
-        }
-
-        const createdSha = await commitWorkspaceFile(
-          nextConnection,
-          emptyWorkspace,
-          'Initialize Conlab workspace',
-        )
-
-        setBuckets([])
-        setEvents([])
-        setWorkspaceSha(createdSha)
-        setSelectedBucketId('')
-        setHistoryAcceptedCount(0)
-      }
+      const loaded = await loadOrInitializeWorkspace(nextConnection)
+      const workspace = normalizeWorkspace(loaded.workspace)
+      const firstBucketId = workspace.buckets[0]?.id ?? ''
+      applyLoadedWorkspace(loaded, firstBucketId)
 
       setConnection(nextConnection)
       localStorage.setItem(CONNECTION_STORAGE_KEY, JSON.stringify(nextConnection))
@@ -392,29 +484,56 @@ function App() {
     }
   }
 
-  async function saveWorkspace(nextBuckets: Bucket[], nextEvents: ContentEvent[], message: string) {
+  async function saveWorkspace(
+    message: string,
+    applyCommand: (workspace: Workspace) => Workspace,
+  ) {
     if (!connection) {
-      return
+      return false
     }
 
     setIsSaving(true)
     setSaveError('')
 
-    try {
-      const nextSha = await commitWorkspaceFile(
-        connection,
-        {
-          version: 1,
-          buckets: nextBuckets,
-          events: nextEvents,
-        },
-        message,
-        workspaceSha,
-      )
+    let lastLoaded: LoadedWorkspace | undefined
 
-      setWorkspaceSha(nextSha)
+    try {
+      let committedWorkspace: LoadedWorkspace | undefined
+
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const latest = await loadConsistentWorkspace(connection)
+        lastLoaded = latest
+        const nextWorkspace = applyCommand(latest.workspace)
+
+        try {
+          const nextSha = await commitWorkspaceFile(connection, nextWorkspace, message, latest.sha)
+          committedWorkspace = {
+            workspace: nextWorkspace,
+            sha: nextSha,
+          }
+          break
+        } catch (error) {
+          if (attempt === 0 && error instanceof Error && error.message.includes('sha')) {
+            continue
+          }
+
+          throw error
+        }
+      }
+
+      if (!committedWorkspace) {
+        throw new Error('Could not commit workspace update')
+      }
+
+      applyLoadedWorkspace(committedWorkspace)
+      return true
     } catch (error) {
+      if (lastLoaded) {
+        applyLoadedWorkspace(lastLoaded)
+      }
+
       setSaveError(error instanceof Error ? error.message : 'Could not save to GitHub')
+      return false
     } finally {
       setIsSaving(false)
     }
@@ -426,10 +545,10 @@ function App() {
     setRepoUrl('')
     setToken('')
     setBranchInput('')
-    setWorkspaceSha(undefined)
     setBuckets([])
     setEvents([])
     setSelectedBucketId('')
+    syncedWorkspaceRef.current = null
   }
 
   function selectBucket(bucketId: string) {
@@ -483,17 +602,28 @@ function App() {
     }
 
     const bucket: Bucket = {
-      id: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')}-${Date.now()}`,
+      id: generateBucketId(name),
       name,
       description,
     }
 
-    const nextBuckets = [...buckets, bucket]
-    setBuckets(nextBuckets)
-    selectBucket(bucket.id)
+    const saved = await saveWorkspace(`Create bucket ${name}`, (workspace) => ({
+      ...workspace,
+      buckets: [...workspace.buckets, bucket],
+    }))
+
+    if (!saved) {
+      return
+    }
+
     setBucketName('')
     setBucketDescription('')
-    await saveWorkspace(nextBuckets, events, `Create bucket ${name}`)
+    setSelectedBucketId(bucket.id)
+    setChangeAction('Create')
+    setSelectedBaseEventId('')
+    setContentBody('')
+    setContentComment('')
+    setHistoryAcceptedCount(0)
   }
 
   async function proposeContent(event: FormEvent<HTMLFormElement>) {
@@ -509,9 +639,8 @@ function App() {
       return
     }
 
-    const nextNumber = String(events.length + 1).padStart(3, '0')
     const contentEvent: ContentEvent = {
-      id: `EV-${nextNumber}`,
+      id: generateEventId(),
       bucketId: selectedBucket.id,
       author: 'You',
       body: contentBody.trim(),
@@ -522,29 +651,65 @@ function App() {
       createdAt: new Date().toISOString(),
     }
 
-    const nextEvents = [contentEvent, ...events]
-    setEvents(nextEvents)
+    const saved = await saveWorkspace(`Propose ${changeAction.toLowerCase()} ${contentEvent.id}`, (workspace) => {
+      const bucketExists = workspace.buckets.some((bucket) => bucket.id === selectedBucket.id)
+
+      if (!bucketExists) {
+        throw new Error('The selected bucket no longer exists. Latest workspace was loaded.')
+      }
+
+      if (workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
+        throw new Error('This bucket already has a proposed event in the latest workspace.')
+      }
+
+      if (
+        contentEvent.baseEventId &&
+        !workspace.events.some((event) => event.id === contentEvent.baseEventId)
+      ) {
+        throw new Error('The selected target event no longer exists in the latest workspace.')
+      }
+
+      return {
+        ...workspace,
+        events: [contentEvent, ...workspace.events],
+      }
+    })
+
+    if (!saved) {
+      return
+    }
+
     setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
-    await saveWorkspace(buckets, nextEvents, `Propose ${changeAction.toLowerCase()} ${contentEvent.id}`)
   }
 
   async function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
-    const nextEvents = events.map((event) =>
-      event.id === eventId
-        ? {
-            ...event,
-            status,
-            decidedAt: new Date().toISOString(),
-          }
-        : event,
-    )
+    await saveWorkspace(`${status} event ${eventId}`, (workspace) => {
+      const targetEvent = workspace.events.find((event) => event.id === eventId)
 
-    setEvents(nextEvents)
-    setHistoryAcceptedCount(countAcceptedEvents(nextEvents, selectedBucket.id))
-    await saveWorkspace(buckets, nextEvents, `${status} event ${eventId}`)
+      if (!targetEvent) {
+        throw new Error('The selected event no longer exists in the latest workspace.')
+      }
+
+      if (targetEvent.status !== 'Proposed') {
+        throw new Error('The selected event was already decided in the latest workspace.')
+      }
+
+      return {
+        ...workspace,
+        events: workspace.events.map((event) =>
+          event.id === eventId
+            ? {
+                ...event,
+                status,
+                decidedAt: new Date().toISOString(),
+              }
+            : event,
+        ),
+      }
+    })
   }
 
   if (!connection) {
