@@ -169,6 +169,25 @@ function parseGitRepoUrl(repoUrl: string): ParsedGitRepo {
   }
 }
 
+function getApiErrorMessage(provider: 'GitHub' | 'GitLab', response: Response, details: unknown) {
+  const detailRecord = details && typeof details === 'object' ? details as Record<string, unknown> : undefined
+  const message = detailRecord?.message
+  const errorDescription = detailRecord?.error_description
+  const error = detailRecord?.error
+  const readableDetail =
+    typeof errorDescription === 'string'
+      ? errorDescription
+      : typeof message === 'string'
+        ? message
+        : typeof error === 'string'
+          ? error
+          : message && typeof message === 'object'
+            ? JSON.stringify(message)
+            : response.statusText || 'Request failed'
+
+  return `${provider} API error ${response.status}: ${readableDetail}`
+}
+
 async function gitHubRequest<T>(connection: GitHubConnection, path: string, init?: RequestInit) {
   const response = await fetch(`https://api.github.com${path}`, {
     ...init,
@@ -182,8 +201,7 @@ async function gitHubRequest<T>(connection: GitHubConnection, path: string, init
 
   if (!response.ok) {
     const details = await response.json().catch(() => undefined)
-    const message = typeof details?.message === 'string' ? details.message : response.statusText
-    throw new Error(message)
+    throw new Error(getApiErrorMessage('GitHub', response, details))
   }
 
   return response.json() as Promise<T>
@@ -202,11 +220,7 @@ async function gitLabRequest<T>(connection: GitLabConnection, path: string, init
 
   if (!response.ok) {
     const details = await response.json().catch(() => undefined)
-    const message =
-      typeof details?.message === 'string'
-        ? details.message
-        : JSON.stringify(details?.message ?? response.statusText)
-    throw new Error(message)
+    throw new Error(getApiErrorMessage('GitLab', response, details))
   }
 
   return response.json() as Promise<T>
@@ -349,6 +363,7 @@ function shouldInitializeWorkspace(error: unknown) {
   return (
     error.message === 'Not Found' ||
     error.message === 'This repository is empty.' ||
+    error.message.includes('API error 404') ||
     error.message.includes('404 File Not Found')
   )
 }
