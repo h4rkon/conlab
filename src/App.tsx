@@ -83,7 +83,9 @@ type LoadedWorkspace = {
   sha?: string
 }
 
+type EventKind = 'Content' | 'Question' | 'Decision'
 type EventAction = 'Create' | 'Revise' | 'Delete'
+type EventStatus = 'Proposed' | 'Accepted' | 'Rejected' | 'Open' | 'Resolved'
 
 type ContentEvent = {
   id: string
@@ -91,9 +93,10 @@ type ContentEvent = {
   author: string
   body: string
   comment: string
+  kind?: EventKind
   action: EventAction
   baseEventId?: string
-  status: 'Proposed' | 'Accepted' | 'Rejected'
+  status: EventStatus
   createdAt: string
   decidedAt?: string
 }
@@ -553,6 +556,10 @@ function getEventAction(event: ContentEvent): EventAction {
   return event.action ?? (event.baseEventId ? 'Revise' : 'Create')
 }
 
+function getEventKind(event: ContentEvent): EventKind {
+  return event.kind ?? 'Content'
+}
+
 function getRootEventId(event: ContentEvent, eventsById: Map<string, ContentEvent>) {
   let rootId = event.baseEventId ?? event.id
   let current = event.baseEventId ? eventsById.get(event.baseEventId) : event
@@ -572,7 +579,9 @@ function getAcceptedEventsAtLimit(
   acceptedEventLimit?: number,
 ) {
   const chronologicalEvents = [...eventsInDisplayOrder].reverse()
-  const acceptedEvents = chronologicalEvents.filter((event) => event.status === 'Accepted')
+  const acceptedEvents = chronologicalEvents.filter(
+    (event) => event.status === 'Accepted' && getEventKind(event) !== 'Question',
+  )
 
   if (typeof acceptedEventLimit !== 'number') {
     return acceptedEvents
@@ -738,6 +747,7 @@ function App() {
   const [bucketSettingsName, setBucketSettingsName] = useState('')
   const [bucketSettingsDescription, setBucketSettingsDescription] = useState('')
   const [bucketSettingsRequiresReview, setBucketSettingsRequiresReview] = useState(true)
+  const [eventKind, setEventKind] = useState<EventKind>('Content')
   const [changeAction, setChangeAction] = useState<EventAction>('Create')
   const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
@@ -753,6 +763,9 @@ function App() {
   )
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
+  const openQuestion = selectedEvents.find((event) => getEventKind(event) === 'Question' && event.status === 'Open')
+  const activeDecisionQuestion = openQuestion ?? selectedEvents.find((event) => event.id === selectedBaseEventId && getEventKind(event) === 'Question')
+  const activeEventKind = openQuestion ? 'Decision' : eventKind
   const acceptedTimeline = getAcceptedEventsAtLimit(selectedEvents)
   const latestAcceptedCount = acceptedTimeline.length
   const appliedAcceptedCount = Math.min(historyAcceptedCount, latestAcceptedCount)
@@ -936,6 +949,7 @@ function App() {
 
   function selectBucket(bucketId: string) {
     setSelectedBucketId(bucketId)
+    setEventKind('Content')
     setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
@@ -949,14 +963,53 @@ function App() {
     setContentComment('')
 
     if (!eventId) {
+      if (eventKind !== 'Question') {
+        setEventKind('Content')
+      }
       setChangeAction('Create')
       setContentBody('')
       return
     }
 
-    setChangeAction('Revise')
     const eventToRevise = selectedEvents.find((event) => event.id === eventId)
+    if (eventKind === 'Question') {
+      setChangeAction('Create')
+      setContentBody('')
+      return
+    }
+
+    if (getEventKind(eventToRevise ?? { kind: 'Content' } as ContentEvent) === 'Question') {
+      setEventKind('Decision')
+      setChangeAction('Create')
+      setContentBody('')
+      return
+    }
+
+    setEventKind('Content')
+    setChangeAction('Revise')
     setContentBody(eventToRevise?.body ?? '')
+  }
+
+  function selectEventKind(kind: EventKind) {
+    setEventKind(kind)
+    setContentBody('')
+    setContentComment('')
+    setChangeAction('Create')
+
+    if (kind === 'Decision') {
+      setSelectedBaseEventId(openQuestion?.id ?? '')
+      return
+    }
+
+    setSelectedBaseEventId('')
+  }
+
+  function getTargetEvent(eventId?: string) {
+    return eventId ? selectedEvents.find((event) => event.id === eventId) : undefined
+  }
+
+  function getQuestionContext(question?: ContentEvent) {
+    return question?.baseEventId ? getTargetEvent(question.baseEventId) : undefined
   }
 
   function selectChangeAction(action: EventAction) {
@@ -1021,13 +1074,17 @@ function App() {
 
   async function proposeContent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const nextEventKind = activeEventKind
 
     if (
       !selectedBucket ||
       !selectedBucketIsActive ||
       pendingEvent ||
-      (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
-      (changeAction !== 'Create' && !selectedBaseEventId) ||
+      (openQuestion && nextEventKind !== 'Decision') ||
+      (nextEventKind !== 'Question' && contentBody.trim().length < 10) ||
+      (nextEventKind === 'Question' && contentBody.trim().length < 3) ||
+      (nextEventKind === 'Content' && changeAction !== 'Create' && !selectedBaseEventId) ||
+      (nextEventKind === 'Decision' && !activeDecisionQuestion) ||
       contentComment.trim().length < 1
     ) {
       return
@@ -1039,20 +1096,30 @@ function App() {
     }
 
     const createdAt = new Date().toISOString()
+    const eventStatus: EventStatus =
+      nextEventKind === 'Question'
+        ? 'Open'
+        : selectedBucket.requiresReview
+          ? 'Proposed'
+          : 'Accepted'
     const contentEvent: ContentEvent = {
       id: generateEventId(),
       bucketId: selectedBucket.id,
       author: eventAuthor,
       body: contentBody.trim(),
       comment: contentComment.trim(),
-      action: changeAction,
-      baseEventId: selectedBaseEventId || undefined,
-      status: selectedBucket.requiresReview ? 'Proposed' : 'Accepted',
+      kind: nextEventKind,
+      action: nextEventKind === 'Content' ? changeAction : 'Create',
+      baseEventId:
+        nextEventKind === 'Decision'
+          ? activeDecisionQuestion?.id
+          : selectedBaseEventId || undefined,
+      status: eventStatus,
       createdAt,
-      decidedAt: selectedBucket.requiresReview ? undefined : createdAt,
+      decidedAt: eventStatus === 'Accepted' ? createdAt : undefined,
     }
 
-    const saved = await saveWorkspace(`${contentEvent.status === 'Accepted' ? 'Accept' : 'Propose'} ${changeAction.toLowerCase()} ${contentEvent.id}`, (workspace) => {
+    const saved = await saveWorkspace(`${contentEvent.status === 'Accepted' ? 'Accept' : contentEvent.status === 'Open' ? 'Ask' : 'Propose'} ${nextEventKind.toLowerCase()} ${contentEvent.id}`, (workspace) => {
       const latestBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
 
       if (!latestBucket) {
@@ -1063,14 +1130,31 @@ function App() {
         throw new Error('This bucket is archived. It cannot accept new content.')
       }
 
-      if (latestBucket.requiresReview && workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
+      if (workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
         throw new Error('This bucket already has a proposed event in the latest workspace.')
+      }
+
+      const latestOpenQuestion = workspace.events.find(
+        (event) => event.bucketId === selectedBucket.id && getEventKind(event) === 'Question' && event.status === 'Open',
+      )
+
+      if (latestOpenQuestion && nextEventKind !== 'Decision') {
+        throw new Error('This bucket has an open question. Add a decision before adding more content.')
+      }
+
+      if (nextEventKind === 'Decision' && (!contentEvent.baseEventId || !latestOpenQuestion || latestOpenQuestion.id !== contentEvent.baseEventId)) {
+        throw new Error('The open question changed in the latest workspace.')
       }
 
       const latestEvent = {
         ...contentEvent,
-        status: latestBucket.requiresReview ? 'Proposed' : 'Accepted',
-        decidedAt: latestBucket.requiresReview ? undefined : contentEvent.createdAt,
+        status:
+          nextEventKind === 'Question'
+            ? 'Open'
+            : latestBucket.requiresReview
+              ? 'Proposed'
+              : 'Accepted',
+        decidedAt: nextEventKind !== 'Question' && !latestBucket.requiresReview ? contentEvent.createdAt : undefined,
       } satisfies ContentEvent
 
       if (
@@ -1082,7 +1166,20 @@ function App() {
 
       return {
         ...workspace,
-        events: [latestEvent, ...workspace.events],
+        events: [
+          latestEvent,
+          ...workspace.events.map((event) =>
+            nextEventKind === 'Decision' &&
+            latestEvent.status === 'Accepted' &&
+            event.id === latestEvent.baseEventId
+              ? {
+                  ...event,
+                  status: 'Resolved' as const,
+                  decidedAt: latestEvent.createdAt,
+                }
+              : event,
+          ),
+        ],
       }
     })
 
@@ -1090,6 +1187,7 @@ function App() {
       return
     }
 
+    setEventKind('Content')
     setChangeAction('Create')
     setSelectedBaseEventId('')
     setContentBody('')
@@ -1122,6 +1220,15 @@ function App() {
                 status,
                 decidedAt: new Date().toISOString(),
               }
+            : status === 'Accepted' &&
+                targetEvent &&
+                getEventKind(targetEvent) === 'Decision' &&
+                event.id === targetEvent.baseEventId
+              ? {
+                  ...event,
+                  status: 'Resolved',
+                  decidedAt: new Date().toISOString(),
+                }
             : event,
         ),
       }
@@ -1476,74 +1583,121 @@ function App() {
             </section>
 
             <form className="content-form" onSubmit={proposeContent}>
-              <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}>
-                <legend>Change action</legend>
+              {openQuestion ? (
+                <p className="permission-note">This bucket has an open question. Add a decision before adding more content.</p>
+              ) : null}
+              <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive || Boolean(openQuestion)}>
+                <legend>Entry type</legend>
                 <label>
                   <input
-                    checked={changeAction === 'Create'}
-                    name="change-action"
-                    onChange={() => selectChangeAction('Create')}
+                    checked={activeEventKind === 'Content'}
+                    name="event-kind"
+                    onChange={() => selectEventKind('Content')}
                     type="radio"
                   />
-                  Create
+                  Content
                 </label>
                 <label>
                   <input
-                    checked={changeAction === 'Revise'}
-                    disabled={!selectedBaseEventId}
-                    name="change-action"
-                    onChange={() => selectChangeAction('Revise')}
+                    checked={activeEventKind === 'Question'}
+                    name="event-kind"
+                    onChange={() => selectEventKind('Question')}
                     type="radio"
                   />
-                  Revise
-                </label>
-                <label>
-                  <input
-                    checked={changeAction === 'Delete'}
-                    disabled={!selectedBaseEventId}
-                    name="change-action"
-                    onChange={() => selectChangeAction('Delete')}
-                    type="radio"
-                  />
-                  Delete
+                  Question
                 </label>
               </fieldset>
+              {activeEventKind === 'Content' ? (
+                <fieldset className="change-action-group" disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}>
+                  <legend>Content action</legend>
+                  <label>
+                    <input
+                      checked={changeAction === 'Create'}
+                      name="change-action"
+                      onChange={() => selectChangeAction('Create')}
+                      type="radio"
+                    />
+                    Create
+                  </label>
+                  <label>
+                    <input
+                      checked={changeAction === 'Revise'}
+                      disabled={!selectedBaseEventId}
+                      name="change-action"
+                      onChange={() => selectChangeAction('Revise')}
+                      type="radio"
+                    />
+                    Revise
+                  </label>
+                  <label>
+                    <input
+                      checked={changeAction === 'Delete'}
+                      disabled={!selectedBaseEventId}
+                      name="change-action"
+                      onChange={() => selectChangeAction('Delete')}
+                      type="radio"
+                    />
+                    Delete
+                  </label>
+                </fieldset>
+              ) : null}
               <label>
-                Change target
+                {activeEventKind === 'Question'
+                  ? 'Question context'
+                  : activeEventKind === 'Decision'
+                    ? 'Question to answer'
+                    : 'Change target'}
                 <select
-                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive}
+                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive || activeEventKind === 'Decision'}
                   onChange={(event) => selectBaseEvent(event.target.value)}
-                  value={selectedBaseEventId}
+                  value={activeEventKind === 'Decision' ? activeDecisionQuestion?.id ?? '' : selectedBaseEventId}
                 >
-                  <option value="">New content block</option>
+                  <option value="">
+                    {activeEventKind === 'Question' ? 'No related event' : 'New content block'}
+                  </option>
+                  {activeEventKind === 'Decision' && activeDecisionQuestion ? (
+                    <option value={activeDecisionQuestion.id}>
+                      {activeDecisionQuestion.id} [Question, Open] {truncate(activeDecisionQuestion.body, 70)}
+                    </option>
+                  ) : null}
                   {selectedEvents.map((event) => (
                     <option key={event.id} value={event.id}>
-                      {event.id} [{getEventAction(event)}, {event.status}] {truncate(event.comment, 70)}
+                      {event.id} [{getEventKind(event)}, {event.status}] {truncate(getEventKind(event) === 'Question' ? event.body : event.comment, 70)}
                     </option>
                   ))}
                 </select>
               </label>
               <label>
-                {changeAction === 'Delete'
-                  ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
-                    ? `Delete delete event ${selectedBaseEventId}`
-                    : `Delete content from ${selectedBaseEventId}`
-                  : selectedBaseEventId
-                    ? `Revise content from ${selectedBaseEventId}`
-                    : 'Add proposed content'}
+                {activeEventKind === 'Question'
+                  ? selectedBaseEventId
+                    ? `Ask question about ${selectedBaseEventId}`
+                    : 'Ask question'
+                  : activeEventKind === 'Decision'
+                    ? `Decision for ${activeDecisionQuestion?.id ?? 'open question'}`
+                    : changeAction === 'Delete'
+                      ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
+                        ? `Delete delete event ${selectedBaseEventId}`
+                        : `Delete content from ${selectedBaseEventId}`
+                      : selectedBaseEventId
+                        ? `Revise content from ${selectedBaseEventId}`
+                        : 'Add proposed content'}
                 <textarea
-                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive || changeAction === 'Delete'}
+                  disabled={Boolean(pendingEvent) || !canContribute || !selectedBucketIsActive || (activeEventKind === 'Content' && changeAction === 'Delete')}
                   onChange={(event) => setContentBody(event.target.value)}
                   placeholder={
                     pendingEvent
                       ? 'Accept or reject the active proposal before adding more content.'
-                      : changeAction === 'Delete'
-                        ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
-                          ? 'The selected delete event will be invalidated if accepted.'
-                          : 'Selected content will be removed from the rendered bucket text if accepted.'
-                      : selectedBaseEventId
-                        ? 'Edit the selected content. The original event stays unchanged.'
-                      : 'Record the next content change for this bucket.'
+                      : activeEventKind === 'Question'
+                        ? 'Ask what needs to be decided before this bucket can move forward.'
+                        : activeEventKind === 'Decision'
+                          ? 'Record the decision that answers the open question.'
+                          : changeAction === 'Delete'
+                            ? selectedTargetEvent && getEventAction(selectedTargetEvent) === 'Delete'
+                              ? 'The selected delete event will be invalidated if accepted.'
+                              : 'Selected content will be removed from the rendered bucket text if accepted.'
+                          : selectedBaseEventId
+                            ? 'Edit the selected content. The original event stays unchanged.'
+                          : 'Record the next content change for this bucket.'
                   }
                   rows={5}
                   value={contentBody}
@@ -1569,13 +1723,22 @@ function App() {
                   !canContribute ||
                   !selectedBucketIsActive ||
                   Boolean(pendingEvent) ||
-                  (changeAction !== 'Delete' && contentBody.trim().length < 10) ||
-                  (changeAction !== 'Create' && !selectedBaseEventId) ||
+                  (openQuestion && activeEventKind !== 'Decision') ||
+                  (activeEventKind !== 'Question' && contentBody.trim().length < 10) ||
+                  (activeEventKind === 'Question' && contentBody.trim().length < 3) ||
+                  (activeEventKind === 'Content' && changeAction !== 'Create' && !selectedBaseEventId) ||
+                  (activeEventKind === 'Decision' && !activeDecisionQuestion) ||
                   contentComment.trim().length < 1
                 }
                 type="submit"
               >
-                Propose content
+                {activeEventKind === 'Question'
+                  ? 'Ask question'
+                  : activeEventKind === 'Decision'
+                    ? selectedBucket.requiresReview
+                      ? 'Propose decision'
+                      : 'Add decision'
+                    : 'Propose content'}
               </button>
               {!canContribute ? (
                 <p className="permission-note">Your Conlab role is read-only. You can view this bucket but cannot propose changes.</p>
@@ -1592,56 +1755,94 @@ function App() {
               </div>
 
               {selectedEvents.length ? (
-                selectedEvents.map((event) => (
-                  <article className="event-card" key={event.id}>
-                    <div className="event-meta">
-                      <span className="event-title">
-                        <strong>{event.id}</strong>
-                        {getEventAction(event) === 'Delete' ? (
-                          <em>Deletes {event.baseEventId}</em>
-                        ) : event.baseEventId ? (
-                          <em>Revises {event.baseEventId}</em>
-                        ) : (
-                          <em>New block</em>
-                        )}
-                      </span>
-                      <span className={`pill ${event.status.toLowerCase()}`}>{event.status}</span>
-                    </div>
-                    <div className="event-change">
-                      <span>{getEventAction(event) === 'Delete' ? 'Deleted content' : 'Content change'}</span>
-                      <MarkdownText text={event.body} />
-                    </div>
-                    <div className="event-comment">
-                      <span>Comment</span>
-                      <MarkdownText text={event.comment} />
-                    </div>
-                    <footer>
-                      <span>
-                        {event.author} · {formatDate(event.createdAt)}
-                      </span>
-                      {event.status === 'Proposed' ? (
-                        <span className="decision-actions">
-                          <button
-                            disabled={isSaving || !canReview}
-                            onClick={() => decideEvent(event.id, 'Rejected')}
-                            type="button"
-                          >
-                            Reject
-                          </button>
-                          <button
-                            disabled={isSaving || !canReview}
-                            onClick={() => decideEvent(event.id, 'Accepted')}
-                            type="button"
-                          >
-                            Accept
-                          </button>
+                selectedEvents.map((event) => {
+                  const kind = getEventKind(event)
+                  const targetEvent = getTargetEvent(event.baseEventId)
+                  const questionForDecision = kind === 'Decision' ? targetEvent : undefined
+                  const contextEvent =
+                    kind === 'Question'
+                      ? targetEvent
+                      : kind === 'Decision'
+                        ? getQuestionContext(questionForDecision)
+                        : undefined
+
+                  return (
+                    <article className="event-card" key={event.id}>
+                      <div className="event-meta">
+                        <span className="event-title">
+                          <strong>{event.id}</strong>
+                          {kind === 'Question' ? (
+                            <em>{event.baseEventId ? `Question about ${event.baseEventId}` : 'Question'}</em>
+                          ) : kind === 'Decision' ? (
+                            <em>Decision for {event.baseEventId}</em>
+                          ) : getEventAction(event) === 'Delete' ? (
+                            <em>Deletes {event.baseEventId}</em>
+                          ) : event.baseEventId ? (
+                            <em>Revises {event.baseEventId}</em>
+                          ) : (
+                            <em>New block</em>
+                          )}
                         </span>
-                      ) : (
-                        <span>Decided {event.decidedAt ? formatDate(event.decidedAt) : ''}</span>
-                      )}
-                    </footer>
-                  </article>
-                ))
+                        <span className={`pill ${event.status.toLowerCase()}`}>{event.status}</span>
+                      </div>
+                      {contextEvent ? (
+                        <div className="event-context">
+                          <span>Context</span>
+                          <MarkdownText text={contextEvent.body} />
+                        </div>
+                      ) : null}
+                      {questionForDecision ? (
+                        <div className="event-question">
+                          <span>Question</span>
+                          <MarkdownText text={questionForDecision.body} />
+                        </div>
+                      ) : null}
+                      <div className="event-change">
+                        <span>
+                          {kind === 'Question'
+                            ? 'Question'
+                            : kind === 'Decision'
+                              ? 'Decision'
+                              : getEventAction(event) === 'Delete'
+                                ? 'Deleted content'
+                                : 'Content change'}
+                        </span>
+                        <MarkdownText text={event.body} />
+                      </div>
+                      <div className="event-comment">
+                        <span>Comment</span>
+                        <MarkdownText text={event.comment} />
+                      </div>
+                      <footer>
+                        <span>
+                          {event.author} · {formatDate(event.createdAt)}
+                        </span>
+                        {event.status === 'Proposed' ? (
+                          <span className="decision-actions">
+                            <button
+                              disabled={isSaving || !canReview}
+                              onClick={() => decideEvent(event.id, 'Rejected')}
+                              type="button"
+                            >
+                              Reject
+                            </button>
+                            <button
+                              disabled={isSaving || !canReview}
+                              onClick={() => decideEvent(event.id, 'Accepted')}
+                              type="button"
+                            >
+                              Accept
+                            </button>
+                          </span>
+                        ) : event.status === 'Open' ? (
+                          <span>Awaiting decision</span>
+                        ) : (
+                          <span>Decided {event.decidedAt ? formatDate(event.decidedAt) : ''}</span>
+                        )}
+                      </footer>
+                    </article>
+                  )
+                })
               ) : (
                 <p className="empty">No events recorded for this bucket.</p>
               )}

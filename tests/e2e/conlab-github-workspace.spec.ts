@@ -30,7 +30,9 @@ async function waitForWorkspaceCommit(page: Page, action: () => Promise<void>) {
 }
 
 function eventCard(page: Page, eventId: string) {
-  return page.locator('.event-card').filter({ hasText: eventId })
+  return page.locator('.event-card').filter({
+    has: page.locator('.event-title strong', { hasText: new RegExp(`^${eventId}$`) }),
+  })
 }
 
 async function latestEventId(page: Page) {
@@ -166,6 +168,27 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   await expect(eventCard(page, autoEventId)).toContainText('Accepted')
   await expect(renderedBucket(page).getByText('Automatically accepted block for the bucket.')).toBeVisible()
 
+  await page.getByRole('radio', { name: 'Question' }).check()
+  await page.getByLabel('Question context').selectOption(autoEventId)
+  await page.getByLabel(`Ask question about ${autoEventId}`).fill('Why are we doing this?')
+  await commentField(page).fill('question')
+  await waitForWorkspaceCommit(page, () =>
+    page.getByRole('button', { name: 'Ask question' }).click(),
+  )
+  const questionEventId = await latestEventId(page)
+  await expect(eventCard(page, questionEventId)).toContainText('Open')
+  await expect(renderedBucket(page).getByText('Why are we doing this?')).not.toBeVisible()
+
+  await page.getByLabel(`Decision for ${questionEventId}`).fill('Because this bucket needs a recorded rationale.')
+  await commentField(page).fill('decision')
+  await waitForWorkspaceCommit(page, () =>
+    page.getByRole('button', { name: 'Add decision' }).click(),
+  )
+  const decisionEventId = await latestEventId(page)
+  await expect(eventCard(page, decisionEventId)).toContainText('Accepted')
+  await expect(eventCard(page, questionEventId)).toContainText('Resolved')
+  await expect(renderedBucket(page).getByText('Because this bucket needs a recorded rationale.')).toBeVisible()
+
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Archive bucket' }).click(),
   )
@@ -186,6 +209,8 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
       expect.objectContaining({ id: deleteEventId, action: 'Delete', status: 'Accepted', baseEventId: reviseEventId }),
       expect.objectContaining({ id: restoreEventId, action: 'Delete', status: 'Accepted', baseEventId: deleteEventId }),
       expect.objectContaining({ id: autoEventId, action: 'Create', status: 'Accepted' }),
+      expect.objectContaining({ id: questionEventId, kind: 'Question', status: 'Resolved', baseEventId: autoEventId }),
+      expect.objectContaining({ id: decisionEventId, kind: 'Decision', status: 'Accepted', baseEventId: questionEventId }),
     ]),
   )
 })

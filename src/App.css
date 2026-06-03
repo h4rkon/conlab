@@ -534,6 +534,16 @@ button:disabled {
   color: #b42318;
 }
 
+.pill.open {
+  background: #e0f2fe;
+  color: #026aa2;
+}
+
+.pill.resolved {
+  background: #eef4ff;
+  color: #3538cd;
+}
+
 .accepted-text,
 .bucket-settings,
 .content-form,
@@ -663,10 +673,22 @@ button:disabled {
   padding-top: 12px;
 }
 
+.event-context,
+.event-question,
 .event-change,
 .event-comment {
   border-radius: 8px;
   padding: 12px;
+}
+
+.event-context {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+}
+
+.event-question {
+  background: #eff8ff;
+  border: 1px solid #b2ddff;
 }
 
 .event-change {
@@ -679,6 +701,8 @@ button:disabled {
   border: 1px solid #fedf89;
 }
 
+.event-context span,
+.event-question span,
 .event-change span,
 .event-comment span {
   color: #667085;
@@ -688,6 +712,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
+.event-context .markdown-text,
+.event-question .markdown-text,
 .event-change .markdown-text,
 .event-comment .markdown-text {
   margin: 6px 0 0;
