@@ -564,6 +564,17 @@ function MarkdownText({ className, text }: { className?: string; text: string })
   )
 }
 
+function BusyOverlay({ message }: { message: string }) {
+  return (
+    <div aria-live="polite" aria-modal="true" className="busy-overlay" role="status">
+      <div className="busy-panel">
+        <span aria-hidden="true" className="busy-spinner" />
+        <span>{message}</span>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [storedConnection] = useState(getStoredConnection)
   const [connection, setConnection] = useState<GitConnection | null>(null)
@@ -921,7 +932,8 @@ function App() {
 
   if (!connection) {
     return (
-      <main className="setup-shell">
+      <main aria-busy={isConnecting} className={isConnecting ? 'setup-shell is-busy' : 'setup-shell'}>
+        {isConnecting ? <BusyOverlay message="Connecting to Git..." /> : null}
         <section className="setup-panel">
           <p className="eyebrow">Install Workspace</p>
           <h1>Connect a Git repo</h1>
@@ -934,6 +946,7 @@ function App() {
             <label>
               Git repo URL
               <input
+                disabled={isConnecting}
                 onChange={(event) => setRepoUrl(event.target.value)}
                 placeholder="https://github.com/owner/repo or https://git.example.com/group/project"
                 value={repoUrl}
@@ -942,6 +955,7 @@ function App() {
             <label>
               Access token
               <input
+                disabled={isConnecting}
                 onChange={(event) => setToken(event.target.value)}
                 placeholder="GitHub PAT or GitLab project/personal access token"
                 type="password"
@@ -951,6 +965,7 @@ function App() {
             <label>
               Branch
               <input
+                disabled={isConnecting}
                 onChange={(event) => setBranchInput(event.target.value)}
                 placeholder="Leave blank for default branch"
                 value={branchInput}
@@ -967,7 +982,8 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main aria-busy={isSaving} className={isSaving ? 'app-shell is-busy' : 'app-shell'}>
+      {isSaving ? <BusyOverlay message="Saving to Git..." /> : null}
       <aside className="bucket-panel" aria-label="Buckets">
         <div className="panel-header">
           <p className="eyebrow">Level 1 MVP</p>

@@ -14,6 +14,52 @@
   padding: 24px;
 }
 
+.is-busy,
+.is-busy * {
+  cursor: wait;
+}
+
+.busy-overlay {
+  align-items: center;
+  background: rgba(13, 23, 36, 0.18);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 20;
+}
+
+.busy-panel {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(13, 23, 36, 0.16);
+  color: #18202b;
+  display: inline-flex;
+  font-size: 15px;
+  font-weight: 800;
+  gap: 12px;
+  min-height: 56px;
+  padding: 14px 18px;
+}
+
+.busy-spinner {
+  animation: busy-spin 0.9s linear infinite;
+  border: 3px solid #dfe4ea;
+  border-radius: 999px;
+  border-top-color: #1d4ed8;
+  height: 24px;
+  width: 24px;
+}
+
+@keyframes busy-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .setup-panel {
   background: #ffffff;
   border: 1px solid #dfe4ea;
