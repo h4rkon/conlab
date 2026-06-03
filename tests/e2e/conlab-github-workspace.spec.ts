@@ -41,6 +41,10 @@ function renderedBucket(page: Page) {
   return page.getByLabel('Accepted text')
 }
 
+function commentField(page: Page) {
+  return page.getByRole('textbox', { name: 'Comment' })
+}
+
 test.beforeAll(async () => {
   branchName = await createTestBranch(token, repo)
 })
@@ -73,8 +77,8 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   await expect(page.getByRole('button', { name: /Problem Space/ })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Problem Space' })).toBeVisible()
 
-  await page.getByLabel('Add proposed content').fill('Initial accepted content for the bucket.')
-  await page.getByLabel('Comment').fill('initial')
+  await page.getByLabel('Add proposed content').fill('Initial **accepted** content for the bucket.')
+  await commentField(page).fill('initial _markdown_ comment')
   await expect(page.getByRole('button', { name: 'Propose content' })).toBeEnabled()
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Propose content' }).click(),
@@ -86,10 +90,11 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
   )
   await expect(eventCard(page, createEventId)).toContainText('Accepted')
   await expect(renderedBucket(page).getByText('Initial accepted content for the bucket.')).toBeVisible()
+  await expect(renderedBucket(page).locator('strong', { hasText: 'accepted' })).toBeVisible()
 
   await page.getByLabel('Change target').selectOption(createEventId)
   await page.getByLabel(`Revise content from ${createEventId}`).fill('Revised accepted content for bucket history.')
-  await page.getByLabel('Comment').fill('revision')
+  await commentField(page).fill('revision')
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Propose content' }).click(),
   )
@@ -102,7 +107,7 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
 
   await page.getByLabel('Change target').selectOption('')
   await page.getByLabel('Add proposed content').fill('Rejected content should never render.')
-  await page.getByLabel('Comment').fill('reject')
+  await commentField(page).fill('reject')
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Propose content' }).click(),
   )
@@ -115,7 +120,7 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
 
   await page.getByLabel('Change target').selectOption(reviseEventId)
   await page.getByRole('radio', { name: 'Delete' }).check()
-  await page.getByLabel('Comment').fill('delete')
+  await commentField(page).fill('delete')
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Propose content' }).click(),
   )
@@ -127,7 +132,7 @@ test('runs bucket CRUD and rendered history against an isolated GitHub branch', 
 
   await page.getByLabel('Change target').selectOption(deleteEventId)
   await page.getByRole('radio', { name: 'Delete' }).check()
-  await page.getByLabel('Comment').fill('restore')
+  await commentField(page).fill('restore')
   await waitForWorkspaceCommit(page, () =>
     page.getByRole('button', { name: 'Propose content' }).click(),
   )

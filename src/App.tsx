@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 type Bucket = {
@@ -361,6 +363,14 @@ function includesKnownWorkspace(latest: Workspace, known: Workspace) {
   return (
     known.buckets.every((bucket) => bucketIds.has(bucket.id)) &&
     known.events.every((event) => eventIds.has(event.id))
+  )
+}
+
+function MarkdownText({ className, text }: { className?: string; text: string }) {
+  return (
+    <div className={className ? `markdown-text ${className}` : 'markdown-text'}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
   )
 }
 
@@ -810,7 +820,7 @@ function App() {
               >
                 <span>
                   <strong>{bucket.name}</strong>
-                  <small>{bucket.description}</small>
+                  <MarkdownText className="bucket-description" text={bucket.description} />
                 </span>
                 <em>{hasPending ? 'Needs acceptance' : `${bucketEvents.length} events`}</em>
               </button>
@@ -826,7 +836,7 @@ function App() {
               <div>
                 <p className="eyebrow">Bucket</p>
                 <h2>{selectedBucket.name}</h2>
-                <p>{selectedBucket.description}</p>
+                <MarkdownText className="workspace-description" text={selectedBucket.description} />
               </div>
               <span className={pendingEvent ? 'status pending' : 'status open'}>
                 {pendingEvent ? 'Acceptance pending' : 'Open for content'}
@@ -866,11 +876,12 @@ function App() {
               {renderedEvents.length ? (
                 renderedEvents.map((event) => (
                   <article className="rendered-change" key={event.id}>
-                    <p>{event.body}</p>
+                    <MarkdownText text={event.body} />
                     <small>
                       Rendered from {event.id}
-                      {event.baseEventId ? `, revises ${event.baseEventId}` : ''} · {event.comment}
+                      {event.baseEventId ? `, revises ${event.baseEventId}` : ''}
                     </small>
+                    <MarkdownText className="rendered-comment" text={event.comment} />
                   </article>
                 ))
               ) : (
@@ -1004,11 +1015,11 @@ function App() {
                     </div>
                     <div className="event-change">
                       <span>{getEventAction(event) === 'Delete' ? 'Deleted content' : 'Content change'}</span>
-                      <p>{event.body}</p>
+                      <MarkdownText text={event.body} />
                     </div>
                     <div className="event-comment">
                       <span>Comment</span>
-                      <p>{event.comment}</p>
+                      <MarkdownText text={event.comment} />
                     </div>
                     <footer>
                       <span>

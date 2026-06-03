@@ -246,17 +246,124 @@ button:disabled {
 }
 
 .bucket-item strong,
-.bucket-item small,
 .bucket-item em {
   display: block;
 }
 
-.bucket-item small {
+.bucket-description {
   color: #667085;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.35;
   margin-top: 4px;
+}
+
+.markdown-text {
+  color: #475467;
+  line-height: 1.5;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.markdown-text > :first-child {
+  margin-top: 0;
+}
+
+.markdown-text > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-text p,
+.markdown-text ul,
+.markdown-text ol,
+.markdown-text blockquote,
+.markdown-text pre,
+.markdown-text table {
+  margin: 8px 0 0;
+}
+
+.markdown-text h1,
+.markdown-text h2,
+.markdown-text h3,
+.markdown-text h4,
+.markdown-text h5,
+.markdown-text h6 {
+  color: #0d1724;
+  line-height: 1.2;
+  margin: 12px 0 0;
+}
+
+.markdown-text h1 {
+  font-size: 22px;
+}
+
+.markdown-text h2 {
+  font-size: 20px;
+}
+
+.markdown-text h3 {
+  font-size: 17px;
+}
+
+.markdown-text ul,
+.markdown-text ol {
+  padding-left: 20px;
+}
+
+.markdown-text li + li {
+  margin-top: 4px;
+}
+
+.markdown-text blockquote {
+  border-left: 3px solid #cfd7e2;
+  color: #667085;
+  padding-left: 10px;
+}
+
+.markdown-text code {
+  background: #eef2f6;
+  border-radius: 4px;
+  color: #18202b;
+  font-size: 0.92em;
+  padding: 2px 4px;
+}
+
+.markdown-text pre {
+  background: #18202b;
+  border-radius: 8px;
+  color: #ffffff;
+  overflow: auto;
+  padding: 12px;
+}
+
+.markdown-text pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.markdown-text a {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.markdown-text table {
+  border-collapse: collapse;
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+}
+
+.markdown-text th,
+.markdown-text td {
+  border: 1px solid #dfe4ea;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.markdown-text th {
+  background: #f8fafc;
+  color: #344054;
 }
 
 .bucket-item em {
@@ -284,7 +391,7 @@ button:disabled {
   line-height: 1.15;
 }
 
-.workspace-header p,
+.workspace-description,
 .rules-panel p,
 .event-card p {
   color: #475467;
@@ -353,12 +460,16 @@ button:disabled {
   padding-left: 12px;
 }
 
-.rendered-change p {
+.rendered-change .markdown-text {
   color: #18202b;
-  margin: 0;
 }
 
 .rendered-change small {
+  color: #667085;
+  font-size: 13px;
+}
+
+.rendered-comment {
   color: #667085;
   font-size: 13px;
 }
@@ -462,8 +573,8 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.event-change p,
-.event-comment p {
+.event-change .markdown-text,
+.event-comment .markdown-text {
   margin: 6px 0 0;
 }
 
