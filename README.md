@@ -32,6 +32,65 @@ Open the local Vite URL printed by the terminal, usually:
 http://localhost:5173
 ```
 
+## Desktop App
+
+Conlab can also be packaged as a macOS desktop app with Tauri.
+
+Additional desktop build requirements:
+
+- Rust, installed with `rustup` or Homebrew
+- macOS build tools, installed with `xcode-select --install`
+
+Install Rust with Homebrew:
+
+```bash
+brew install rust
+```
+
+Run the desktop app in development mode:
+
+```bash
+make desktop-dev
+```
+
+Build a local desktop bundle:
+
+```bash
+make desktop-build
+```
+
+The generated macOS artifacts are written under:
+
+```text
+src-tauri/target/release/bundle/
+```
+
+The Tauri wrapper uses the same app UI and the same GitHub/GitLab workspace connection flow as the browser version.
+
+## Homebrew Cask Delivery
+
+The intended install shape for users is:
+
+```bash
+brew tap h4rkon/conlab
+brew install --cask conlab
+```
+
+To publish that:
+
+1. Build the desktop app with `make desktop-build`.
+2. Upload the generated `.dmg` to a GitHub release, for example `v0.1.0`.
+3. Compute the checksum:
+
+```bash
+shasum -a 256 path/to/Conlab_0.1.0_aarch64.dmg
+```
+
+4. Copy `packaging/homebrew/Casks/conlab.rb.template` into the Homebrew tap as `Casks/conlab.rb`.
+5. Replace the template SHA and release artifact URL if needed.
+
+For the first internal wave, unsigned builds are acceptable for testing. For broader macOS distribution, sign and notarize the app before publishing the cask.
+
 ## Connect A Workspace
 
 On the install screen, enter:
@@ -171,6 +230,8 @@ If `conlab.json` does not exist, the app initializes it.
 ```bash
 make run
 make build
+make desktop-dev
+make desktop-build
 make test-e2e
 ```
 
@@ -179,6 +240,8 @@ Direct npm commands:
 ```bash
 npm run dev
 npm run build
+npm run desktop:dev
+npm run desktop:build
 npm run lint
 npm run test:e2e
 ```
