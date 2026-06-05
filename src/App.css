@@ -545,7 +545,6 @@ button:disabled {
 }
 
 .accepted-text,
-.bucket-settings,
 .content-form,
 .event-log {
   background: #ffffff;
@@ -554,10 +553,25 @@ button:disabled {
   padding: 18px;
 }
 
+.bucket-settings {
+  background: #f8fafc;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.bucket-settings-panel {
+  flex: 0 0 auto;
+}
+
+.bucket-settings .section-title {
+  margin-bottom: 0;
+}
+
 .settings-actions {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
 }
 
 .section-title {

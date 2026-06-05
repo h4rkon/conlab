@@ -1458,6 +1458,62 @@ function App() {
             )
           })}
         </nav>
+
+        {canAdmin && selectedBucket ? (
+          <form className="bucket-settings bucket-settings-panel" onSubmit={updateBucketSettings}>
+            <div className="section-title">
+              <h3>Bucket Settings</h3>
+              <span>{selectedBucket.status === 'archived' ? 'Archived' : 'Admin'}</span>
+            </div>
+            <label>
+              Bucket name
+              <input
+                disabled={isSaving || selectedBucket.status === 'archived'}
+                onChange={(event) => setBucketSettingsName(event.target.value)}
+                value={bucketSettingsName}
+              />
+            </label>
+            <label>
+              Description
+              <textarea
+                disabled={isSaving || selectedBucket.status === 'archived'}
+                onChange={(event) => setBucketSettingsDescription(event.target.value)}
+                rows={3}
+                value={bucketSettingsDescription}
+              />
+            </label>
+            <label className="checkbox-label">
+              <input
+                checked={bucketSettingsRequiresReview}
+                disabled={isSaving || selectedBucket.status === 'archived'}
+                onChange={(event) => setBucketSettingsRequiresReview(event.target.checked)}
+                type="checkbox"
+              />
+              Require reviewer acceptance for content
+            </label>
+            <div className="settings-actions">
+              <button
+                disabled={
+                  isSaving ||
+                  selectedBucket.status === 'archived' ||
+                  !bucketSettingsName.trim() ||
+                  !bucketSettingsDescription.trim()
+                }
+                type="submit"
+              >
+                Save settings
+              </button>
+              <button
+                className="danger-button"
+                disabled={isSaving || selectedBucket.status === 'archived'}
+                onClick={archiveBucket}
+                type="button"
+              >
+                Archive bucket
+              </button>
+            </div>
+          </form>
+        ) : null}
       </aside>
 
       <section className="workspace">
@@ -1479,62 +1535,6 @@ function App() {
                       : 'Auto-accepting content'}
               </span>
             </header>
-
-            {canAdmin ? (
-              <form className="bucket-settings" onSubmit={updateBucketSettings}>
-                <div className="section-title">
-                  <h3>Bucket Settings</h3>
-                  <span>{selectedBucket.status === 'archived' ? 'Archived' : 'Admin'}</span>
-                </div>
-                <label>
-                  Bucket name
-                  <input
-                    disabled={isSaving || selectedBucket.status === 'archived'}
-                    onChange={(event) => setBucketSettingsName(event.target.value)}
-                    value={bucketSettingsName}
-                  />
-                </label>
-                <label>
-                  Description
-                  <textarea
-                    disabled={isSaving || selectedBucket.status === 'archived'}
-                    onChange={(event) => setBucketSettingsDescription(event.target.value)}
-                    rows={3}
-                    value={bucketSettingsDescription}
-                  />
-                </label>
-                <label className="checkbox-label">
-                  <input
-                    checked={bucketSettingsRequiresReview}
-                    disabled={isSaving || selectedBucket.status === 'archived'}
-                    onChange={(event) => setBucketSettingsRequiresReview(event.target.checked)}
-                    type="checkbox"
-                  />
-                  Require reviewer acceptance for content
-                </label>
-                <div className="settings-actions">
-                  <button
-                    disabled={
-                      isSaving ||
-                      selectedBucket.status === 'archived' ||
-                      !bucketSettingsName.trim() ||
-                      !bucketSettingsDescription.trim()
-                    }
-                    type="submit"
-                  >
-                    Save settings
-                  </button>
-                  <button
-                    className="danger-button"
-                    disabled={isSaving || selectedBucket.status === 'archived'}
-                    onClick={archiveBucket}
-                    type="button"
-                  >
-                    Archive bucket
-                  </button>
-                </div>
-              </form>
-            ) : null}
 
             <section className="accepted-text" aria-label="Accepted text">
               <div className="section-title">
