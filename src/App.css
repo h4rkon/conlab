@@ -740,6 +740,7 @@ button:disabled {
 .event-log {
   display: grid;
   gap: 12px;
+  min-width: 0;
 }
 
 .event-card {
@@ -747,6 +748,8 @@ button:disabled {
   border-radius: 8px;
   display: grid;
   gap: 12px;
+  min-width: 0;
+  overflow: hidden;
   padding: 14px;
 }
 
@@ -761,11 +764,20 @@ button:disabled {
 .event-card footer {
   gap: 12px;
   justify-content: space-between;
+  min-width: 0;
 }
 
 .event-title {
   display: grid;
   gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.event-title strong,
+.event-title em {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .event-title em {
@@ -778,8 +790,14 @@ button:disabled {
 .event-card footer {
   border-top: 1px solid #eef2f6;
   color: #667085;
+  flex-wrap: wrap;
   font-size: 13px;
   padding-top: 12px;
+}
+
+.event-card footer > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .event-context,
@@ -787,6 +805,8 @@ button:disabled {
 .event-change,
 .event-comment {
   border-radius: 8px;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
 }
 
@@ -829,7 +849,9 @@ button:disabled {
 }
 
 .decision-actions {
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
 }
 
 .decision-actions button:first-child {
