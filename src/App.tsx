@@ -779,6 +779,8 @@ function App() {
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
   const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
+  const [isRenderedTextOpen, setIsRenderedTextOpen] = useState(false)
+  const [isEventLogOpen, setIsEventLogOpen] = useState(false)
   const [remoteUpdate, setRemoteUpdate] = useState<WorkspaceUpdateNotification | null>(null)
   const syncedWorkspaceRef = useRef<LoadedWorkspace | null>(null)
   const notifiedShaRef = useRef<string | undefined>(undefined)
@@ -1692,49 +1694,63 @@ function App() {
                   <h3>Rendered Bucket Text</h3>
                   <span>{renderedEvents.length} rendered blocks</span>
                 </div>
-                <button className="export-button" onClick={exportVisibleMarkdown} type="button">
-                  Export .md
-                </button>
+                <div className="section-actions">
+                  <button className="export-button" onClick={exportVisibleMarkdown} type="button">
+                    Export .md
+                  </button>
+                  <button
+                    aria-expanded={isRenderedTextOpen}
+                    className="collapse-button"
+                    onClick={() => setIsRenderedTextOpen((isOpen) => !isOpen)}
+                    type="button"
+                  >
+                    {isRenderedTextOpen ? 'Collapse' : 'Open'}
+                  </button>
+                </div>
               </div>
-              <div className="history-controls" aria-label="Rendered history controls">
-                <button
-                  disabled={appliedAcceptedCount === 0}
-                  onClick={() => setHistoryAcceptedCount((current) => Math.max(0, current - 1))}
-                  type="button"
-                >
-                  &lt;&lt;
-                </button>
-                <span>
-                  {appliedEvent
-                    ? `Showing through ${appliedEvent.id} (${appliedAcceptedCount}/${latestAcceptedCount})`
-                    : `Before accepted events (0/${latestAcceptedCount})`}
-                </span>
-                <button
-                  disabled={appliedAcceptedCount >= latestAcceptedCount}
-                  onClick={() =>
-                    setHistoryAcceptedCount((current) =>
-                      Math.min(latestAcceptedCount, current + 1),
-                    )
-                  }
-                  type="button"
-                >
-                  &gt;&gt;
-                </button>
-              </div>
-              {renderedEvents.length ? (
-                renderedEvents.map((event) => (
-                  <article className="rendered-change" key={event.id}>
-                    <MarkdownText text={event.body} />
-                    <small>
-                      Rendered from {event.id}
-                      {event.baseEventId ? `, revises ${event.baseEventId}` : ''}
-                    </small>
-                    <MarkdownText className="rendered-comment" text={event.comment} />
-                  </article>
-                ))
-              ) : (
-                <p className="empty">No accepted content yet.</p>
-              )}
+              {isRenderedTextOpen ? (
+                <>
+                  <div className="history-controls" aria-label="Rendered history controls">
+                    <button
+                      disabled={appliedAcceptedCount === 0}
+                      onClick={() => setHistoryAcceptedCount((current) => Math.max(0, current - 1))}
+                      type="button"
+                    >
+                      &lt;&lt;
+                    </button>
+                    <span>
+                      {appliedEvent
+                        ? `Showing through ${appliedEvent.id} (${appliedAcceptedCount}/${latestAcceptedCount})`
+                        : `Before accepted events (0/${latestAcceptedCount})`}
+                    </span>
+                    <button
+                      disabled={appliedAcceptedCount >= latestAcceptedCount}
+                      onClick={() =>
+                        setHistoryAcceptedCount((current) =>
+                          Math.min(latestAcceptedCount, current + 1),
+                        )
+                      }
+                      type="button"
+                    >
+                      &gt;&gt;
+                    </button>
+                  </div>
+                  {renderedEvents.length ? (
+                    renderedEvents.map((event) => (
+                      <article className="rendered-change" key={event.id}>
+                        <MarkdownText text={event.body} />
+                        <small>
+                          Rendered from {event.id}
+                          {event.baseEventId ? `, revises ${event.baseEventId}` : ''}
+                        </small>
+                        <MarkdownText className="rendered-comment" text={event.comment} />
+                      </article>
+                    ))
+                  ) : (
+                    <p className="empty">No accepted content yet.</p>
+                  )}
+                </>
+              ) : null}
             </section>
 
             <form className="content-form" onSubmit={proposeContent}>
@@ -1905,11 +1921,21 @@ function App() {
 
             <section className="event-log" aria-label="Event log">
               <div className="section-title">
-                <h3>Event Log</h3>
-                <span>{selectedEvents.length} events</span>
+                <div>
+                  <h3>Event Log</h3>
+                  <span>{selectedEvents.length} events</span>
+                </div>
+                <button
+                  aria-expanded={isEventLogOpen}
+                  className="collapse-button"
+                  onClick={() => setIsEventLogOpen((isOpen) => !isOpen)}
+                  type="button"
+                >
+                  {isEventLogOpen ? 'Collapse' : 'Open'}
+                </button>
               </div>
 
-              {selectedEvents.length ? (
+              {isEventLogOpen && selectedEvents.length ? (
                 selectedEvents.map((event) => {
                   const kind = getEventKind(event)
                   const targetEvent = getTargetEvent(event.baseEventId)
@@ -1998,9 +2024,9 @@ function App() {
                     </article>
                   )
                 })
-              ) : (
+              ) : isEventLogOpen ? (
                 <p className="empty">No events recorded for this bucket.</p>
-              )}
+              ) : null}
             </section>
           </>
         ) : (

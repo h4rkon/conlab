@@ -638,6 +638,13 @@ button:disabled {
   min-width: 0;
 }
 
+.section-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
 .section-title h3 {
   font-size: 16px;
 }
@@ -658,6 +665,19 @@ button:disabled {
 }
 
 .export-button:hover {
+  background: #f9fafb;
+}
+
+.collapse-button {
+  background: #ffffff;
+  border-color: #d0d5dd;
+  color: #344054;
+  min-height: 34px;
+  min-width: 76px;
+  padding: 6px 10px;
+}
+
+.collapse-button:hover {
   background: #f9fafb;
 }
 
