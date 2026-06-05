@@ -685,6 +685,12 @@ function generateBucketId(name: string) {
   return `${slug}-${timestamp}`
 }
 
+function getFileSlug(value: string) {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+
+  return slug || 'bucket'
+}
+
 function getTimestampLabel() {
   return new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
 }
@@ -1093,6 +1099,52 @@ function App() {
 
   function getQuestionContext(question?: ContentEvent) {
     return question?.baseEventId ? getTargetEvent(question.baseEventId) : undefined
+  }
+
+  function exportVisibleMarkdown() {
+    if (!selectedBucket) {
+      return
+    }
+
+    const historyLabel = appliedEvent
+      ? `Showing through ${appliedEvent.id} (${appliedAcceptedCount}/${latestAcceptedCount})`
+      : `Before accepted events (0/${latestAcceptedCount})`
+    const lines = [
+      `# ${selectedBucket.name}`,
+      '',
+      selectedBucket.description.trim(),
+      '',
+      `> Exported visible Conlab state: ${historyLabel}`,
+      '',
+    ].filter((line, index, values) => line !== '' || values[index - 1] !== '')
+
+    if (!renderedEvents.length) {
+      lines.push('No accepted content yet.')
+    }
+
+    for (const event of renderedEvents) {
+      lines.push('---', '', event.body.trim(), '')
+      lines.push(`_Rendered from ${event.id}${event.baseEventId ? `, revises ${event.baseEventId}` : ''}_`)
+
+      if (event.comment.trim()) {
+        lines.push('', `> Comment: ${event.comment.trim().replace(/\n/g, '\n> ')}`)
+      }
+
+      lines.push('')
+    }
+
+    const blob = new Blob([`${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`], {
+      type: 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+
+    anchor.href = url
+    anchor.download = `${getFileSlug(selectedBucket.name)}-${getTimestampLabel()}.md`
+    document.body.append(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
   }
 
   function selectChangeAction(action: EventAction) {
@@ -1636,8 +1688,13 @@ function App() {
 
             <section className="accepted-text" aria-label="Accepted text">
               <div className="section-title">
-                <h3>Rendered Bucket Text</h3>
-                <span>{renderedEvents.length} rendered blocks</span>
+                <div>
+                  <h3>Rendered Bucket Text</h3>
+                  <span>{renderedEvents.length} rendered blocks</span>
+                </div>
+                <button className="export-button" onClick={exportVisibleMarkdown} type="button">
+                  Export .md
+                </button>
               </div>
               <div className="history-controls" aria-label="Rendered history controls">
                 <button

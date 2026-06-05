@@ -637,6 +637,19 @@ button:disabled {
   font-weight: 700;
 }
 
+.export-button {
+  background: #ffffff;
+  border-color: #d0d5dd;
+  color: #344054;
+  min-height: 34px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.export-button:hover {
+  background: #f9fafb;
+}
+
 .rendered-change {
   border-left: 3px solid #12b76a;
   display: grid;
