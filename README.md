@@ -36,10 +36,16 @@ http://localhost:5173
 
 Conlab can also be packaged as a macOS desktop app with Tauri.
 
-Download desktop builds from GitHub Releases:
+Download the current MVP desktop build from GitHub Releases:
 
 ```text
-https://github.com/h4rkon/conlab/releases
+https://github.com/h4rkon/conlab/releases/tag/v1.0.0
+```
+
+Direct macOS Apple Silicon `.dmg` download:
+
+```text
+https://github.com/h4rkon/conlab/releases/download/v1.0.0/Conlab_1.0.0_aarch64.dmg
 ```
 
 For the MVP, `.dmg` builds are unsigned and not notarized. macOS may show a Gatekeeper warning on first launch. If macOS blocks the app, right-click `Conlab.app`, choose `Open`, and confirm the launch.
