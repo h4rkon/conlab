@@ -91,6 +91,28 @@ shasum -a 256 path/to/Conlab_1.0.0_aarch64.dmg
 
 For the first internal wave, unsigned builds are acceptable for testing. For broader macOS distribution, sign and notarize the app before publishing the cask.
 
+## Version And Release Notes
+
+Current MVP version: `1.0.0`.
+
+The version is defined in:
+
+- `package.json`
+- `package-lock.json`
+- `src-tauri/tauri.conf.json`
+- `src-tauri/Cargo.toml`
+
+Release-facing references are mirrored in:
+
+- `README.md`
+- `packaging/homebrew/Casks/conlab.rb.template`
+
+GitHub Release notes for the current MVP are in:
+
+```text
+releases/v1.0.0.md
+```
+
 ## Connect A Workspace
 
 On the install screen, enter:
