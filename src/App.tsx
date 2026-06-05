@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -81,6 +81,11 @@ type ParsedGitRepo = ParsedGitHubRepo | ParsedGitLabRepo
 type LoadedWorkspace = {
   workspace: Workspace
   sha?: string
+}
+
+type WorkspaceUpdateNotification = {
+  loaded: LoadedWorkspace
+  summary: string
 }
 
 type EventKind = 'Content' | 'Question' | 'Decision'
@@ -710,6 +715,21 @@ function includesKnownWorkspace(latest: Workspace, known: Workspace) {
   )
 }
 
+function summarizeWorkspaceUpdate(latest: Workspace, current: Workspace) {
+  const currentEventIds = new Set(current.events.map((event) => event.id))
+  const latestEvent = latest.events.find((event) => !currentEventIds.has(event.id)) ?? latest.events[0]
+
+  if (latestEvent) {
+    return `${latestEvent.author} added ${getEventKind(latestEvent).toLowerCase()} ${latestEvent.id} (${latestEvent.status})`
+  }
+
+  if (latest.buckets.length !== current.buckets.length) {
+    return `Bucket list changed (${latest.buckets.length} buckets)`
+  }
+
+  return 'Workspace settings changed'
+}
+
 function MarkdownText({ className, text }: { className?: string; text: string }) {
   return (
     <div className={className ? `markdown-text ${className}` : 'markdown-text'}>
@@ -753,7 +773,9 @@ function App() {
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
   const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
+  const [remoteUpdate, setRemoteUpdate] = useState<WorkspaceUpdateNotification | null>(null)
   const syncedWorkspaceRef = useRef<LoadedWorkspace | null>(null)
+  const notifiedShaRef = useRef<string | undefined>(undefined)
 
   const selectedBucket = buckets.find((bucket) => bucket.id === selectedBucketId) ?? buckets[0]
 
@@ -796,6 +818,8 @@ function App() {
       workspace,
       sha: loaded.sha,
     }
+    notifiedShaRef.current = undefined
+    setRemoteUpdate(null)
     setBuckets(workspace.buckets)
     setEvents(workspace.events)
     setSelectedBucketId(nextBucketId)
@@ -877,6 +901,65 @@ function App() {
     } finally {
       setIsConnecting(false)
     }
+  }
+
+  useEffect(() => {
+    if (!connection) {
+      return undefined
+    }
+
+    let cancelled = false
+    const activeConnection = connection
+
+    async function checkForRemoteUpdate() {
+      if (cancelled || isSaving || isConnecting) {
+        return
+      }
+
+      const current = syncedWorkspaceRef.current
+
+      if (!current?.sha) {
+        return
+      }
+
+      try {
+        const latest = await loadWorkspaceFile(activeConnection)
+
+        if (
+          latest.sha &&
+          latest.sha !== current.sha &&
+          latest.sha !== notifiedShaRef.current
+        ) {
+          const latestWorkspace = normalizeWorkspace(latest.workspace)
+          notifiedShaRef.current = latest.sha
+          setRemoteUpdate({
+            loaded: {
+              workspace: latestWorkspace,
+              sha: latest.sha,
+            },
+            summary: summarizeWorkspaceUpdate(latestWorkspace, current.workspace),
+          })
+        }
+      } catch {
+        // Polling must not interrupt the main editing flow. Explicit saves still surface errors.
+      }
+    }
+
+    void checkForRemoteUpdate()
+    const intervalId = window.setInterval(checkForRemoteUpdate, 30000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(intervalId)
+    }
+  }, [connection, isConnecting, isSaving])
+
+  function loadRemoteUpdate() {
+    if (!remoteUpdate) {
+      return
+    }
+
+    applyLoadedWorkspace(remoteUpdate.loaded)
   }
 
   async function saveWorkspace(
@@ -1366,6 +1449,21 @@ function App() {
   return (
     <main aria-busy={isSaving} className={isSaving ? 'app-shell is-busy' : 'app-shell'}>
       {isSaving ? <BusyOverlay message="Saving to Git..." /> : null}
+      {remoteUpdate ? (
+        <aside className="update-banner" aria-live="polite">
+          <span>
+            New workspace update: <strong>{remoteUpdate.summary}</strong>
+          </span>
+          <span className="update-actions">
+            <button onClick={loadRemoteUpdate} type="button">
+              Load latest
+            </button>
+            <button className="secondary-inline-button" onClick={() => setRemoteUpdate(null)} type="button">
+              Dismiss
+            </button>
+          </span>
+        </aside>
+      ) : null}
       <aside className="bucket-panel" aria-label="Buckets">
         <div className="panel-header">
           <p className="eyebrow">Level 1 MVP</p>
