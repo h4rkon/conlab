@@ -1,6 +1,6 @@
 [package]
 name = "conlab"
-version = "0.1.0"
+version = "1.0.0"
 description = "Controlled collaboration text ledger"
 authors = ["Victor Sauermann"]
 license = "MIT"

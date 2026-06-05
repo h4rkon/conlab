@@ -1,6 +1,6 @@
 # Conlab
 
-Controlled collaboration text ledger prototype.
+Controlled collaboration text ledger MVP, version `1.0.0`.
 
 Conlab stores collaborative text work as event log entries in a Git repository. Users do not edit a shared document directly. They create buckets, add content events, ask questions, record decisions, and review changes. The rendered bucket text is calculated from accepted ledger events.
 
@@ -79,11 +79,11 @@ brew install --cask conlab
 To publish that:
 
 1. Build the desktop app with `make desktop-build`.
-2. Upload the generated `.dmg` to a GitHub release, for example `v0.1.0`.
+2. Upload the generated `.dmg` to a GitHub release, for example `v1.0.0`.
 3. Compute the checksum:
 
 ```bash
-shasum -a 256 path/to/Conlab_0.1.0_aarch64.dmg
+shasum -a 256 path/to/Conlab_1.0.0_aarch64.dmg
 ```
 
 4. Copy `packaging/homebrew/Casks/conlab.rb.template` into the Homebrew tap as `Casks/conlab.rb`.
