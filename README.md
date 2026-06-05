@@ -36,15 +36,23 @@ http://localhost:5173
 
 Conlab can also be packaged as a macOS desktop app with Tauri.
 
+Download desktop builds from GitHub Releases:
+
+```text
+https://github.com/h4rkon/conlab/releases
+```
+
+For the MVP, `.dmg` builds are unsigned and not notarized. macOS may show a Gatekeeper warning on first launch. If macOS blocks the app, right-click `Conlab.app`, choose `Open`, and confirm the launch.
+
 Additional desktop build requirements:
 
-- Rust, installed with `rustup` or Homebrew
+- Rust, installed with `rustup`
 - macOS build tools, installed with `xcode-select --install`
 
-Install Rust with Homebrew:
+Install Rust:
 
 ```bash
-brew install rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
 Run the desktop app in development mode:
@@ -67,29 +75,12 @@ src-tauri/target/release/bundle/
 
 The Tauri wrapper uses the same app UI and the same GitHub/GitLab workspace connection flow as the browser version.
 
-## Homebrew Cask Delivery
-
-The intended install shape for users is:
-
-```bash
-brew tap h4rkon/conlab
-brew install --cask conlab
-```
-
-To publish that:
+To publish a new desktop release:
 
 1. Build the desktop app with `make desktop-build`.
-2. Upload the generated `.dmg` to a GitHub release, for example `v1.0.0`.
-3. Compute the checksum:
-
-```bash
-shasum -a 256 path/to/Conlab_1.0.0_aarch64.dmg
-```
-
-4. Copy `packaging/homebrew/Casks/conlab.rb.template` into the Homebrew tap as `Casks/conlab.rb`.
-5. Replace the template SHA and release artifact URL if needed.
-
-For the first internal wave, unsigned builds are acceptable for testing. For broader macOS distribution, sign and notarize the app before publishing the cask.
+2. Create a GitHub Release, for example `v1.0.0`.
+3. Upload the generated `.dmg` as a release asset.
+4. Users download the `.dmg`, open it, and drag `Conlab.app` into Applications.
 
 ## Version And Release Notes
 
@@ -105,7 +96,6 @@ The version is defined in:
 Release-facing references are mirrored in:
 
 - `README.md`
-- `packaging/homebrew/Casks/conlab.rb.template`
 
 GitHub Release notes for the current MVP are in:
 
