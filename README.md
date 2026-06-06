@@ -1,6 +1,6 @@
 # Conlab
 
-Controlled collaboration text ledger MVP, version `1.0.0`.
+Controlled collaboration text ledger MVP, version `2.0.0`.
 
 Conlab stores collaborative text work as event log entries in a Git repository. Users do not edit a shared document directly. They create buckets, add content events, ask questions, record decisions, and review changes. The rendered bucket text is calculated from accepted ledger events.
 
@@ -39,13 +39,13 @@ Conlab can also be packaged as a macOS desktop app with Tauri.
 Download the current MVP desktop build from GitHub Releases:
 
 ```text
-https://github.com/h4rkon/conlab/releases/tag/v1.0.0
+https://github.com/h4rkon/conlab/releases/tag/v2.0.0
 ```
 
 Direct macOS Apple Silicon `.dmg` download:
 
 ```text
-https://github.com/h4rkon/conlab/releases/download/v1.0.0/Conlab_1.0.0_macos_aarch64_icon_adhoc_signed.dmg
+https://github.com/h4rkon/conlab/releases/download/v2.0.0/Conlab_2.0.0_macos_aarch64_icon_adhoc_signed.dmg
 ```
 
 For the MVP, `.dmg` builds are ad-hoc signed but not Apple-notarized. macOS may show a Gatekeeper warning on first launch. If macOS blocks the app, right-click `Conlab.app`, choose `Open`, and confirm the launch.
@@ -84,13 +84,13 @@ The Tauri wrapper uses the same app UI and the same GitHub/GitLab workspace conn
 To publish a new desktop release:
 
 1. Build the desktop app with `make desktop-build`.
-2. Create a GitHub Release, for example `v1.0.0`.
+2. Create a GitHub Release, for example `v2.0.0`.
 3. Upload the generated `.dmg` as a release asset.
 4. Users download the `.dmg`, open it, and drag `Conlab.app` into Applications.
 
 ## Version And Release Notes
 
-Current MVP version: `1.0.0`.
+Current MVP version: `2.0.0`.
 
 The version is defined in:
 
@@ -106,7 +106,7 @@ Release-facing references are mirrored in:
 GitHub Release notes for the current MVP are in:
 
 ```text
-releases/v1.0.0.md
+releases/v2.0.0.md
 ```
 
 ## Connect A Workspace
@@ -166,6 +166,7 @@ A bucket is a controlled text area with:
 
 - name
 - description
+- type: content or prompt
 - review mode
 - status
 
@@ -174,6 +175,8 @@ Admins can create buckets, change bucket settings, and archive buckets. Archived
 ```text
 archived_<former_name>_<YYYYMMDDHHMMSS>
 ```
+
+Content buckets hold source material for controlled collaboration. Prompt buckets hold reusable GenAI prompt text and are governed by the same event ledger and review settings. Existing workspaces without a bucket type are treated as content buckets.
 
 ### Review Modes
 
@@ -226,6 +229,29 @@ Accepted decisions render into the bucket text.
 ### Rendered Text History
 
 The rendered bucket text is calculated from accepted events only. Use the `<<` and `>>` controls to navigate backward and forward through accepted history.
+
+### GenAI Contribution Review
+
+For content buckets, Conlab can run a GenAI plausibility check before a contribution is posted. The check uses the user's local GenAI API key and compares the new post against the current visible rendered bucket content.
+
+The check evaluates:
+
+- whether the post is mainly one clear statement
+- whether it overlaps with visible existing content
+- whether it can be rewritten shorter and more directly
+
+Prompt buckets skip this GenAI contribution check because prompt text is managed as governed source material.
+
+### Narrative Generation
+
+Conlab can generate a narrative from selected bucket content.
+
+Use `Create narrative` to select:
+
+- one prompt bucket
+- one or more content buckets
+
+The prompt bucket's rendered text is used as the GenAI instruction. The selected content buckets' rendered text is used as source material in the order shown in the modal. The generated narrative is displayed locally and can be copied out for external use.
 
 ### Notifications
 
