@@ -806,16 +806,14 @@ function getEventKindLabel(kind: EventKind) {
   return kind.toLowerCase()
 }
 
-function buildBucketEventContext(events: ContentEvent[]) {
+function buildVisibleContentContext(events: ContentEvent[]) {
   if (!events.length) {
-    return 'No event log entries exist in this bucket yet.'
+    return 'No visible rendered content exists in this bucket yet.'
   }
 
   return events
-    .slice()
-    .reverse()
     .map((event, index) => [
-      `Event ${index + 1}`,
+      `Visible block ${index + 1}`,
       `ID: ${event.id}`,
       `Kind: ${getEventKind(event)}`,
       `Action: ${getEventAction(event)}`,
@@ -829,11 +827,11 @@ function buildBucketEventContext(events: ContentEvent[]) {
 
 function buildPlausibilityPrompt(
   bucket: Bucket,
-  bucketEvents: ContentEvent[],
+  visibleEvents: ContentEvent[],
   selectedTargetEvent: ContentEvent | undefined,
   contribution: ContentEvent,
 ) {
-  const bucketEventContext = buildBucketEventContext(bucketEvents)
+  const visibleContentContext = buildVisibleContentContext(visibleEvents)
   const targetText = selectedTargetEvent
     ? `Target event ${selectedTargetEvent.id} (${getEventKind(selectedTargetEvent)}, ${getEventAction(selectedTargetEvent)}):\n${selectedTargetEvent.body}`
     : 'No specific target event.'
@@ -845,7 +843,7 @@ Conlab is a controlled collaboration text editor. Contributions must be small, r
 
 Evaluate exactly these three things:
 1. Single-statement discipline: decide whether the new content contains mainly one clear statement. Reject or warn if it tries to insert a long section, a broad essay, a list of many arguments, or multiple independent claims.
-2. Overlap with all bucket history: compare the new content against every event log entry below, regardless of whether the prior entry is accepted, proposed, rejected, open, or resolved. Detect semantic overlap, near-duplicates, or rephrased repetition. Similar wording is not required. Example: "compliance drives digital sovereignty" overlaps with "regulation and compliance are key requirements sources for digital sovereignty".
+2. Overlap with current visible bucket content: compare the new content only against the visible rendered content below. Do not treat deleted, invalidated, superseded, rejected, or non-rendered historical entries as overlap unless their content is still visible below. Detect semantic overlap, near-duplicates, or rephrased repetition. Similar wording is not required. Example: "compliance drives digital sovereignty" overlaps with "regulation and compliance are key requirements sources for digital sovereignty" only if that prior idea is still visible in the current rendered content.
 3. Rewrite quality: propose shorter, crisper, less flowery wording. Prefer direct language and one useful statement.
 
 Return only valid JSON with this exact shape:
@@ -875,8 +873,8 @@ ${bucket.name}
 Bucket description:
 ${bucket.description}
 
-All existing bucket event log entries:
-${bucketEventContext}
+Current visible rendered bucket content:
+${visibleContentContext}
 
 Selected target/context:
 ${targetText}
@@ -927,7 +925,7 @@ function normalizeGenAIResult(value: unknown): GenAICheckResult {
 async function runGenAIPlausibilityCheck(
   settings: GenAISettings,
   bucket: Bucket,
-  bucketEvents: ContentEvent[],
+  visibleEvents: ContentEvent[],
   selectedTargetEvent: ContentEvent | undefined,
   contribution: ContentEvent,
 ) {
@@ -956,7 +954,7 @@ async function runGenAIPlausibilityCheck(
           },
           {
             role: 'user',
-            content: buildPlausibilityPrompt(bucket, bucketEvents, selectedTargetEvent, contribution),
+            content: buildPlausibilityPrompt(bucket, visibleEvents, selectedTargetEvent, contribution),
           },
         ],
       }),
@@ -1345,7 +1343,7 @@ function App() {
       const result = await runGenAIPlausibilityCheck(
         settings,
         selectedBucket,
-        selectedEvents,
+        renderedEvents,
         getTargetEvent(pendingContribution.contentEvent.baseEventId),
         pendingContribution.contentEvent,
       )
