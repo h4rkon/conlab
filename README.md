@@ -178,6 +178,41 @@ archived_<former_name>_<YYYYMMDDHHMMSS>
 
 Content buckets hold source material for controlled collaboration. Prompt buckets hold reusable GenAI prompt text and are governed by the same event ledger and review settings. Existing workspaces without a bucket type are treated as content buckets.
 
+### Prompt Buckets
+
+A prompt bucket stores reusable GenAI instructions as governed ledger content. It is useful when the team wants to improve prompts collaboratively instead of hard-coding them in the application.
+
+To create one:
+
+1. Create a bucket.
+2. Set `Bucket type` to `Prompt`.
+3. Add each relevant prompt instruction as a content event.
+4. Let the bucket's review mode decide whether prompt changes need reviewer acceptance or are auto-accepted.
+
+Only accepted visible prompt content is used. Deleted, rejected, superseded, or non-rendered prompt events are ignored in the rendered prompt text.
+
+Example prompt bucket structure:
+
+```md
+You write concise executive narratives from controlled source material.
+```
+
+```md
+Use only the selected bucket content. Do not invent facts.
+```
+
+```md
+Write one coherent paragraph unless the source material clearly needs more structure.
+```
+
+```md
+Prefer direct language. Avoid generic marketing claims and unnecessary adjectives.
+```
+
+Prompt buckets are currently used by narrative generation. Select one prompt bucket in the `Create narrative` modal, then select one or more content buckets as source material.
+
+Prompt buckets do not trigger the GenAI contribution plausibility check. The prompt text itself is already controlled through the same Conlab event/review workflow.
+
 ### Review Modes
 
 Buckets can require reviewer acceptance or auto-accept content.
