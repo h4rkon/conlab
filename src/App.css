@@ -147,8 +147,7 @@
 }
 
 .genai-preview > span,
-.genai-result > span,
-.genai-result p span {
+.genai-result-section > span {
   color: #667085;
   display: block;
   font-size: 12px;
@@ -177,6 +176,12 @@
   color: #0d1724;
 }
 
+.genai-result-section {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .genai-result ul {
   color: #475467;
   margin: 0;
@@ -186,6 +191,7 @@
 .genai-result p {
   color: #475467;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .modal-actions {

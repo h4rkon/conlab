@@ -95,11 +95,21 @@ type GenAISettings = {
 }
 
 type GenAICheckResult = {
-  fits_together: boolean
+  ready_to_post: boolean
   confidence: 'high' | 'medium' | 'low' | string
-  issues: string[]
+  single_statement: {
+    ok: boolean
+    assessment: string
+  }
+  overlap: {
+    has_overlap: boolean
+    assessment: string
+    similar_events: string[]
+  }
   contradictions: string[]
-  suggested_fix: string
+  rewrite_suggestions: string[]
+  concise_rewrite: string
+  overall_assessment: string
 }
 
 type PendingContribution = {
@@ -796,30 +806,68 @@ function getEventKindLabel(kind: EventKind) {
   return kind.toLowerCase()
 }
 
+function buildBucketEventContext(events: ContentEvent[]) {
+  if (!events.length) {
+    return 'No event log entries exist in this bucket yet.'
+  }
+
+  return events
+    .slice()
+    .reverse()
+    .map((event, index) => [
+      `Event ${index + 1}`,
+      `ID: ${event.id}`,
+      `Kind: ${getEventKind(event)}`,
+      `Action: ${getEventAction(event)}`,
+      `Status: ${event.status}`,
+      `Base event: ${event.baseEventId ?? 'none'}`,
+      `Body:\n${event.body}`,
+      `Comment:\n${event.comment}`,
+    ].join('\n'))
+    .join('\n\n---\n\n')
+}
+
 function buildPlausibilityPrompt(
   bucket: Bucket,
-  existingRenderedEvents: ContentEvent[],
+  bucketEvents: ContentEvent[],
   selectedTargetEvent: ContentEvent | undefined,
   contribution: ContentEvent,
 ) {
-  const existingText = existingRenderedEvents.length
-    ? existingRenderedEvents.map((event, index) => `Block ${index + 1} (${event.id}):\n${event.body}`).join('\n\n---\n\n')
-    : 'No accepted content exists yet.'
+  const bucketEventContext = buildBucketEventContext(bucketEvents)
   const targetText = selectedTargetEvent
     ? `Target event ${selectedTargetEvent.id} (${getEventKind(selectedTargetEvent)}, ${getEventAction(selectedTargetEvent)}):\n${selectedTargetEvent.body}`
     : 'No specific target event.'
 
   return `
-Check whether a new Conlab ${getEventKindLabel(getEventKind(contribution))} contribution is plausible and useful for the existing bucket.
+You are reviewing one proposed Conlab ${getEventKindLabel(getEventKind(contribution))} contribution before it is posted.
+
+Conlab is a controlled collaboration text editor. Contributions must be small, reviewable event log entries. The desired style is: one contribution, one clear statement, accept or reject, then proceed.
+
+Evaluate exactly these three things:
+1. Single-statement discipline: decide whether the new content contains mainly one clear statement. Reject or warn if it tries to insert a long section, a broad essay, a list of many arguments, or multiple independent claims.
+2. Overlap with all bucket history: compare the new content against every event log entry below, regardless of whether the prior entry is accepted, proposed, rejected, open, or resolved. Detect semantic overlap, near-duplicates, or rephrased repetition. Similar wording is not required. Example: "compliance drives digital sovereignty" overlaps with "regulation and compliance are key requirements sources for digital sovereignty".
+3. Rewrite quality: propose shorter, crisper, less flowery wording. Prefer direct language and one useful statement.
 
 Return only valid JSON with this exact shape:
 {
-  "fits_together": true,
+  "ready_to_post": true,
   "confidence": "high | medium | low",
-  "issues": [],
+  "single_statement": {
+    "ok": true,
+    "assessment": ""
+  },
+  "overlap": {
+    "has_overlap": false,
+    "assessment": "",
+    "similar_events": []
+  },
   "contradictions": [],
-  "suggested_fix": ""
+  "rewrite_suggestions": [],
+  "concise_rewrite": "",
+  "overall_assessment": ""
 }
+
+Use ready_to_post=false when the contribution is too broad, too long, highly overlapping, contradictory, or not useful as a small controlled event.
 
 Bucket:
 ${bucket.name}
@@ -827,8 +875,8 @@ ${bucket.name}
 Bucket description:
 ${bucket.description}
 
-Existing rendered bucket text:
-${existingText}
+All existing bucket event log entries:
+${bucketEventContext}
 
 Selected target/context:
 ${targetText}
@@ -844,10 +892,42 @@ ${contribution.comment}
 `.trim()
 }
 
+function normalizeStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+}
+
+function normalizeGenAIResult(value: unknown): GenAICheckResult {
+  const result = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const singleStatement = result.single_statement && typeof result.single_statement === 'object'
+    ? result.single_statement as Record<string, unknown>
+    : {}
+  const overlap = result.overlap && typeof result.overlap === 'object'
+    ? result.overlap as Record<string, unknown>
+    : {}
+
+  return {
+    ready_to_post: Boolean(result.ready_to_post),
+    confidence: typeof result.confidence === 'string' ? result.confidence : 'low',
+    single_statement: {
+      ok: Boolean(singleStatement.ok),
+      assessment: typeof singleStatement.assessment === 'string' ? singleStatement.assessment : '',
+    },
+    overlap: {
+      has_overlap: Boolean(overlap.has_overlap),
+      assessment: typeof overlap.assessment === 'string' ? overlap.assessment : '',
+      similar_events: normalizeStringArray(overlap.similar_events),
+    },
+    contradictions: normalizeStringArray(result.contradictions),
+    rewrite_suggestions: normalizeStringArray(result.rewrite_suggestions),
+    concise_rewrite: typeof result.concise_rewrite === 'string' ? result.concise_rewrite : '',
+    overall_assessment: typeof result.overall_assessment === 'string' ? result.overall_assessment : '',
+  }
+}
+
 async function runGenAIPlausibilityCheck(
   settings: GenAISettings,
   bucket: Bucket,
-  existingRenderedEvents: ContentEvent[],
+  bucketEvents: ContentEvent[],
   selectedTargetEvent: ContentEvent | undefined,
   contribution: ContentEvent,
 ) {
@@ -872,11 +952,11 @@ async function runGenAIPlausibilityCheck(
         messages: [
           {
             role: 'system',
-            content: 'You are a text plausibility checker. Check whether text blocks fit together logically. Return only valid JSON.',
+            content: 'You are a strict contribution reviewer for a controlled collaboration text editor. Return only valid JSON.',
           },
           {
             role: 'user',
-            content: buildPlausibilityPrompt(bucket, existingRenderedEvents, selectedTargetEvent, contribution),
+            content: buildPlausibilityPrompt(bucket, bucketEvents, selectedTargetEvent, contribution),
           },
         ],
       }),
@@ -895,7 +975,7 @@ async function runGenAIPlausibilityCheck(
   }
 
   try {
-    return JSON.parse(content) as GenAICheckResult
+    return normalizeGenAIResult(JSON.parse(content.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')))
   } catch {
     throw new Error(`GenAI returned non-JSON content: ${content}`)
   }
@@ -1265,7 +1345,7 @@ function App() {
       const result = await runGenAIPlausibilityCheck(
         settings,
         selectedBucket,
-        renderedEvents,
+        selectedEvents,
         getTargetEvent(pendingContribution.contentEvent.baseEventId),
         pendingContribution.contentEvent,
       )
@@ -1780,8 +1860,8 @@ function App() {
             </div>
 
             <p className="modal-copy">
-              Check whether this {pendingContribution.eventKind.toLowerCase()} fits the current bucket before it is written to Git.
-              You can also post without a GenAI check.
+              Check whether this {pendingContribution.eventKind.toLowerCase()} is one clear statement, overlaps with existing bucket history,
+              and can be rewritten more crisply before it is written to Git. You can also post without a GenAI check.
             </p>
 
             <div className="genai-settings">
@@ -1822,36 +1902,61 @@ function App() {
             {genAIError ? <p className="error-text">{genAIError}</p> : null}
 
             {genAIResult ? (
-              <div className={genAIResult.fits_together ? 'genai-result positive' : 'genai-result warning'}>
+              <div className={genAIResult.ready_to_post ? 'genai-result positive' : 'genai-result warning'}>
                 <strong>
-                  {genAIResult.fits_together ? 'Fits together' : 'Needs attention'} · {genAIResult.confidence} confidence
+                  {genAIResult.ready_to_post ? 'Ready to post' : 'Needs attention'} · {genAIResult.confidence} confidence
                 </strong>
-                {genAIResult.issues.length ? (
-                  <>
-                    <span>Issues</span>
+
+                <div className="genai-result-section">
+                  <span>Single-statement discipline</span>
+                  <p>{genAIResult.single_statement.assessment || (genAIResult.single_statement.ok ? 'The contribution is focused on one statement.' : 'The contribution appears too broad.')}</p>
+                </div>
+
+                <div className="genai-result-section">
+                  <span>Overlap with bucket history</span>
+                  <p>{genAIResult.overlap.assessment || (genAIResult.overlap.has_overlap ? 'Potential overlap found.' : 'No meaningful overlap found.')}</p>
+                  {genAIResult.overlap.similar_events.length ? (
                     <ul>
-                      {genAIResult.issues.map((issue) => (
-                        <li key={issue}>{issue}</li>
+                      {genAIResult.overlap.similar_events.map((eventId) => (
+                        <li key={eventId}>{eventId}</li>
                       ))}
                     </ul>
-                  </>
-                ) : null}
+                  ) : null}
+                </div>
+
                 {genAIResult.contradictions.length ? (
-                  <>
+                  <div className="genai-result-section">
                     <span>Contradictions</span>
                     <ul>
                       {genAIResult.contradictions.map((contradiction) => (
                         <li key={contradiction}>{contradiction}</li>
                       ))}
                     </ul>
-                  </>
+                  </div>
                 ) : null}
-                {genAIResult.suggested_fix ? (
-                  <p>
-                    <span>Suggested fix</span>
-                    {genAIResult.suggested_fix}
-                  </p>
+
+                {genAIResult.rewrite_suggestions.length ? (
+                  <div className="genai-result-section">
+                    <span>Rewrite suggestions</span>
+                    <ul>
+                      {genAIResult.rewrite_suggestions.map((suggestion) => (
+                        <li key={suggestion}>{suggestion}</li>
+                      ))}
+                    </ul>
+                  </div>
                 ) : null}
+
+                {genAIResult.concise_rewrite ? (
+                  <div className="genai-result-section">
+                    <span>Concise rewrite</span>
+                    <p>{genAIResult.concise_rewrite}</p>
+                  </div>
+                ) : null}
+
+                <div className="genai-result-section">
+                  <span>Overall assessment</span>
+                  <p>{genAIResult.overall_assessment}</p>
+                </div>
               </div>
             ) : null}
 
