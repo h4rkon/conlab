@@ -120,6 +120,11 @@ type PendingContribution = {
   eventKind: EventKind
 }
 
+type NarrativeSource = {
+  bucketName: string
+  content: string
+}
+
 type EventKind = 'Content' | 'Question' | 'Decision'
 type EventAction = 'Create' | 'Revise' | 'Delete'
 type EventStatus = 'Proposed' | 'Accepted' | 'Rejected' | 'Open' | 'Resolved'
@@ -983,6 +988,84 @@ async function runGenAIPlausibilityCheck(
   }
 }
 
+function buildNarrativePrompt(promptText: string, sources: NarrativeSource[]) {
+  const sourceText = sources.map((source, index) => [
+    `Source bucket ${index + 1}: ${source.bucketName}`,
+    source.content || 'No visible content.',
+  ].join('\n')).join('\n\n---\n\n')
+
+  return `
+Use the selected prompt and selected Conlab bucket content to create one narrative.
+
+Selected prompt:
+${promptText}
+
+Selected source bucket content in the requested order:
+${sourceText}
+
+Return only the narrative text. Do not explain the process. Do not include a preface.
+`.trim()
+}
+
+async function runGenAINarrativeGeneration(
+  settings: GenAISettings,
+  promptText: string,
+  sources: NarrativeSource[],
+) {
+  const endpoint = settings.endpoint.trim().replace(/\/$/, '') || DEFAULT_GENAI_ENDPOINT
+  const model = settings.model.trim() || DEFAULT_GENAI_MODEL
+  const apiKey = settings.apiKey.trim()
+
+  if (!apiKey) {
+    throw new Error('Enter a GenAI API key before generating a narrative.')
+  }
+
+  if (!promptText.trim()) {
+    throw new Error('The selected prompt bucket has no visible prompt text.')
+  }
+
+  if (!sources.length) {
+    throw new Error('Select at least one content bucket.')
+  }
+
+  const response = await fetch(
+    `${endpoint}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=2024-02-01`,
+    {
+      method: 'POST',
+      headers: {
+        'Api-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: 'You create concise narratives from controlled collaboration source material. Follow the selected prompt strictly.',
+          },
+          {
+            role: 'user',
+            content: buildNarrativePrompt(promptText, sources),
+          },
+        ],
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`GenAI API error ${response.status}: ${await response.text()}`)
+  }
+
+  const data = await response.json() as { choices?: { message?: { content?: string } }[] }
+  const content = data.choices?.[0]?.message?.content?.trim()
+
+  if (!content) {
+    throw new Error('GenAI returned an empty narrative.')
+  }
+
+  return content.replace(/^```(?:markdown|md|text)?\s*/i, '').replace(/\s*```$/, '').trim()
+}
+
 function MarkdownText({ className, text }: { className?: string; text: string }) {
   return (
     <div className={className ? `markdown-text ${className}` : 'markdown-text'}>
@@ -1039,6 +1122,13 @@ function App() {
   const [genAIResult, setGenAIResult] = useState<GenAICheckResult | null>(null)
   const [genAIError, setGenAIError] = useState('')
   const [isCheckingGenAI, setIsCheckingGenAI] = useState(false)
+  const [isNarrativeModalOpen, setIsNarrativeModalOpen] = useState(false)
+  const [selectedPromptBucketId, setSelectedPromptBucketId] = useState('')
+  const [selectedNarrativeBucketIds, setSelectedNarrativeBucketIds] = useState<string[]>([])
+  const [narrativeText, setNarrativeText] = useState('')
+  const [narrativeError, setNarrativeError] = useState('')
+  const [isGeneratingNarrative, setIsGeneratingNarrative] = useState(false)
+  const [hasCopiedNarrative, setHasCopiedNarrative] = useState(false)
   const syncedWorkspaceRef = useRef<LoadedWorkspace | null>(null)
   const notifiedShaRef = useRef<string | undefined>(undefined)
 
@@ -1066,6 +1156,8 @@ function App() {
   const canAdmin = conlabRole === 'admin'
   const selectedBucketIsActive = selectedBucket?.status !== 'archived'
   const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
+  const promptBuckets = buckets.filter((bucket) => bucket.type === 'prompt' && bucket.status !== 'archived')
+  const contentBuckets = buckets.filter((bucket) => bucket.type === 'content' && bucket.status !== 'archived')
 
   function syncBucketSettings(bucket?: Bucket) {
     setBucketSettingsName(bucket?.name ?? '')
@@ -1378,6 +1470,96 @@ function App() {
     setPendingContribution(null)
     setGenAIResult(null)
     setGenAIError('')
+  }
+
+  function getRenderedEventsForBucket(bucketId: string) {
+    return getRenderedEvents(events.filter((event) => event.bucketId === bucketId))
+  }
+
+  function getRenderedTextForBucket(bucketId: string) {
+    return getRenderedEventsForBucket(bucketId)
+      .map((event) => event.body.trim())
+      .filter(Boolean)
+      .join('\n\n')
+  }
+
+  function openNarrativeModal() {
+    const defaultPromptId = selectedPromptBucketId || promptBuckets[0]?.id || ''
+    const retainedBucketIds = selectedNarrativeBucketIds.filter((bucketId) =>
+      contentBuckets.some((bucket) => bucket.id === bucketId),
+    )
+    const defaultBucketIds = retainedBucketIds.length
+      ? retainedBucketIds
+      : selectedBucket?.type === 'content'
+        ? [selectedBucket.id]
+        : contentBuckets.map((bucket) => bucket.id)
+
+    setSelectedPromptBucketId(defaultPromptId)
+    setSelectedNarrativeBucketIds(defaultBucketIds)
+    setNarrativeText('')
+    setNarrativeError('')
+    setHasCopiedNarrative(false)
+    setIsNarrativeModalOpen(true)
+  }
+
+  function closeNarrativeModal() {
+    if (isGeneratingNarrative) {
+      return
+    }
+
+    setIsNarrativeModalOpen(false)
+    setNarrativeError('')
+    setHasCopiedNarrative(false)
+  }
+
+  function toggleNarrativeBucket(bucketId: string) {
+    setSelectedNarrativeBucketIds((current) =>
+      current.includes(bucketId)
+        ? current.filter((selectedBucketId) => selectedBucketId !== bucketId)
+        : [...current, bucketId],
+    )
+    setNarrativeText('')
+    setHasCopiedNarrative(false)
+  }
+
+  async function generateNarrative() {
+    setIsGeneratingNarrative(true)
+    setNarrativeError('')
+    setNarrativeText('')
+    setHasCopiedNarrative(false)
+
+    try {
+      const settings = persistCurrentGenAISettings()
+      const promptText = getRenderedTextForBucket(selectedPromptBucketId)
+      const sources = selectedNarrativeBucketIds
+        .map((bucketId) => {
+          const bucket = buckets.find((candidate) => candidate.id === bucketId)
+
+          return bucket
+            ? {
+                bucketName: bucket.name,
+                content: getRenderedTextForBucket(bucket.id),
+              }
+            : undefined
+        })
+        .filter((source): source is NarrativeSource => Boolean(source))
+      const generatedNarrative = await runGenAINarrativeGeneration(settings, promptText, sources)
+
+      setNarrativeText(generatedNarrative)
+    } catch (error) {
+      setNarrativeError(error instanceof Error ? error.message : 'Could not generate narrative.')
+    } finally {
+      setIsGeneratingNarrative(false)
+    }
+  }
+
+  async function copyNarrative() {
+    if (!narrativeText) {
+      return
+    }
+
+    await navigator.clipboard.writeText(narrativeText)
+    setHasCopiedNarrative(true)
   }
 
   function selectBaseEvent(eventId: string) {
@@ -1851,7 +2033,10 @@ function App() {
   }
 
   return (
-    <main aria-busy={isSaving || isCheckingGenAI} className={isSaving || isCheckingGenAI ? 'app-shell is-busy' : 'app-shell'}>
+    <main
+      aria-busy={isSaving || isCheckingGenAI || isGeneratingNarrative}
+      className={isSaving || isCheckingGenAI || isGeneratingNarrative ? 'app-shell is-busy' : 'app-shell'}
+    >
       {isSaving ? <BusyOverlay message="Saving to Git..." /> : null}
       {pendingContribution ? (
         <div aria-modal="true" className="modal-backdrop" role="dialog">
@@ -2006,6 +2191,148 @@ function App() {
                   Post contribution
                 </button>
               ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {isNarrativeModalOpen ? (
+        <div aria-modal="true" className="modal-backdrop" role="dialog">
+          <section className="modal-panel narrative-modal" aria-labelledby="narrative-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Narrative</p>
+                <h2 id="narrative-title">Create narrative</h2>
+              </div>
+              <button
+                aria-label="Close narrative generator"
+                className="icon-button"
+                disabled={isGeneratingNarrative}
+                onClick={closeNarrativeModal}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Select one prompt bucket and one or more content buckets. Content buckets are used in the order shown here.
+            </p>
+
+            <div className="genai-settings">
+              <label>
+                Endpoint
+                <input
+                  disabled={isGeneratingNarrative}
+                  onChange={(event) => setGenAIEndpoint(event.target.value)}
+                  value={genAIEndpoint}
+                />
+              </label>
+              <label>
+                Model
+                <input
+                  disabled={isGeneratingNarrative}
+                  onChange={(event) => setGenAIModel(event.target.value)}
+                  value={genAIModel}
+                />
+              </label>
+              <label>
+                API key
+                <input
+                  disabled={isGeneratingNarrative}
+                  onChange={(event) => setGenAIKey(event.target.value)}
+                  placeholder="Stored locally in this browser"
+                  type="password"
+                  value={genAIKey}
+                />
+              </label>
+            </div>
+
+            <label>
+              Prompt bucket
+              <select
+                disabled={isGeneratingNarrative}
+                onChange={(event) => {
+                  setSelectedPromptBucketId(event.target.value)
+                  setNarrativeText('')
+                  setHasCopiedNarrative(false)
+                }}
+                value={selectedPromptBucketId}
+              >
+                <option value="">Select a prompt bucket</option>
+                {promptBuckets.map((bucket) => (
+                  <option key={bucket.id} value={bucket.id}>
+                    {bucket.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="narrative-source-list">
+              <span>Content buckets</span>
+              {contentBuckets.length ? (
+                contentBuckets.map((bucket) => {
+                  const renderedBlockCount = getRenderedEventsForBucket(bucket.id).length
+
+                  return (
+                    <label className="checkbox-label narrative-source-item" key={bucket.id}>
+                      <input
+                        checked={selectedNarrativeBucketIds.includes(bucket.id)}
+                        disabled={isGeneratingNarrative}
+                        onChange={() => toggleNarrativeBucket(bucket.id)}
+                        type="checkbox"
+                      />
+                      <span>
+                        <strong>{bucket.name}</strong>
+                        <small>{renderedBlockCount} visible blocks</small>
+                      </span>
+                    </label>
+                  )
+                })
+              ) : (
+                <p className="empty">No content buckets available.</p>
+              )}
+            </div>
+
+            {narrativeError ? <p className="error-text">{narrativeError}</p> : null}
+
+            {narrativeText ? (
+              <div className="narrative-output">
+                <span>Generated narrative</span>
+                <textarea readOnly rows={8} value={narrativeText} />
+              </div>
+            ) : null}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-button compact"
+                disabled={isGeneratingNarrative}
+                onClick={closeNarrativeModal}
+                type="button"
+              >
+                Close
+              </button>
+              {narrativeText ? (
+                <button
+                  className="secondary-button compact"
+                  disabled={isGeneratingNarrative}
+                  onClick={copyNarrative}
+                  type="button"
+                >
+                  {hasCopiedNarrative ? 'Copied' : 'Copy narrative'}
+                </button>
+              ) : null}
+              <button
+                disabled={
+                  isGeneratingNarrative ||
+                  !genAIKey.trim() ||
+                  !selectedPromptBucketId ||
+                  selectedNarrativeBucketIds.length < 1
+                }
+                onClick={generateNarrative}
+                type="button"
+              >
+                {isGeneratingNarrative ? 'Generating...' : narrativeText ? 'Regenerate narrative' : 'Generate narrative'}
+              </button>
             </div>
           </section>
         </div>
@@ -2577,6 +2904,14 @@ function App() {
           A new event may also revise or delete any previous event without mutating the original
           history entry.
         </p>
+        <button
+          className="secondary-button"
+          disabled={!promptBuckets.length || !contentBuckets.length}
+          onClick={openNarrativeModal}
+          type="button"
+        >
+          Create narrative
+        </button>
         <dl>
           <div>
             <dt>Buckets</dt>

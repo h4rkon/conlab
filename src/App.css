@@ -86,6 +86,11 @@
   width: min(760px, 100%);
 }
 
+.narrative-modal {
+  max-width: 860px;
+  width: min(860px, 100%);
+}
+
 .modal-header {
   align-items: start;
   display: flex;
@@ -192,6 +197,60 @@
   color: #475467;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.narrative-source-list {
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.narrative-source-list > span,
+.narrative-output > span {
+  color: #667085;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.narrative-source-item {
+  align-items: flex-start;
+  border-top: 1px solid #eef2f6;
+  padding-top: 8px;
+}
+
+.narrative-source-item:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.narrative-source-item span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.narrative-source-item strong {
+  color: #18202b;
+  font-size: 13px;
+}
+
+.narrative-source-item small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.narrative-output {
+  display: grid;
+  gap: 8px;
+}
+
+.narrative-output textarea {
+  background: #f8fafc;
+  min-height: 180px;
 }
 
 .modal-actions {
