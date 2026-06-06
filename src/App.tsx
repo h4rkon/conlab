@@ -4,10 +4,13 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
 
+type BucketType = 'content' | 'prompt'
+
 type Bucket = {
   id: string
   name: string
   description: string
+  type: BucketType
   requiresReview: boolean
   status: 'active' | 'archived'
   archivedAt?: string
@@ -153,6 +156,7 @@ function normalizeWorkspace(workspace?: Partial<Workspace>): Workspace {
     version: 1,
     buckets: (workspace?.buckets ?? []).map((bucket) => ({
       ...bucket,
+      type: bucket.type ?? 'content',
       requiresReview: bucket.requiresReview ?? true,
       status: bucket.status ?? 'active',
     })),
@@ -1013,9 +1017,11 @@ function App() {
   const [selectedBucketId, setSelectedBucketId] = useState('')
   const [bucketName, setBucketName] = useState('')
   const [bucketDescription, setBucketDescription] = useState('')
+  const [bucketType, setBucketType] = useState<BucketType>('content')
   const [bucketRequiresReview, setBucketRequiresReview] = useState(true)
   const [bucketSettingsName, setBucketSettingsName] = useState('')
   const [bucketSettingsDescription, setBucketSettingsDescription] = useState('')
+  const [bucketSettingsType, setBucketSettingsType] = useState<BucketType>('content')
   const [bucketSettingsRequiresReview, setBucketSettingsRequiresReview] = useState(true)
   const [eventKind, setEventKind] = useState<EventKind>('Content')
   const [changeAction, setChangeAction] = useState<EventAction>('Create')
@@ -1064,6 +1070,7 @@ function App() {
   function syncBucketSettings(bucket?: Bucket) {
     setBucketSettingsName(bucket?.name ?? '')
     setBucketSettingsDescription(bucket?.description ?? '')
+    setBucketSettingsType(bucket?.type ?? 'content')
     setBucketSettingsRequiresReview(bucket?.requiresReview ?? true)
   }
 
@@ -1508,6 +1515,7 @@ function App() {
       id: generateBucketId(name),
       name,
       description,
+      type: bucketType,
       requiresReview: bucketRequiresReview,
       status: 'active',
     }
@@ -1523,6 +1531,7 @@ function App() {
 
     setBucketName('')
     setBucketDescription('')
+    setBucketType('content')
     setBucketRequiresReview(true)
     setSelectedBucketId(bucket.id)
     syncBucketSettings(bucket)
@@ -1578,6 +1587,11 @@ function App() {
       status: eventStatus,
       createdAt,
       decidedAt: eventStatus === 'Accepted' ? createdAt : undefined,
+    }
+
+    if (selectedBucket.type === 'prompt') {
+      await saveContentEvent(contentEvent, nextEventKind)
+      return
     }
 
     setPendingContribution({
@@ -1745,6 +1759,7 @@ function App() {
                 ...bucket,
                 name,
                 description,
+                type: bucketSettingsType,
                 requiresReview: bucketSettingsRequiresReview,
               }
             : bucket,
@@ -2060,6 +2075,17 @@ function App() {
               rows={3}
             />
           </label>
+          <label>
+            Bucket type
+            <select
+              disabled={isSaving || !canAdmin}
+              onChange={(event) => setBucketType(event.target.value as BucketType)}
+              value={bucketType}
+            >
+              <option value="content">Content</option>
+              <option value="prompt">Prompt</option>
+            </select>
+          </label>
           <label className="checkbox-label">
             <input
               checked={bucketRequiresReview}
@@ -2089,6 +2115,7 @@ function App() {
               >
                 <span>
                   <strong>{bucket.name}</strong>
+                  <small className="bucket-type-label">{bucket.type === 'prompt' ? 'Prompt bucket' : 'Content bucket'}</small>
                   <MarkdownText className="bucket-description" text={bucket.description} />
                 </span>
                 <em>
@@ -2125,6 +2152,17 @@ function App() {
                 rows={3}
                 value={bucketSettingsDescription}
               />
+            </label>
+            <label>
+              Bucket type
+              <select
+                disabled={isSaving || selectedBucket.status === 'archived'}
+                onChange={(event) => setBucketSettingsType(event.target.value as BucketType)}
+                value={bucketSettingsType}
+              >
+                <option value="content">Content</option>
+                <option value="prompt">Prompt</option>
+              </select>
             </label>
             <label className="checkbox-label">
               <input
@@ -2174,9 +2212,13 @@ function App() {
                   ? 'Archived'
                   : pendingEvent
                     ? 'Acceptance pending'
-                    : selectedBucket.requiresReview
-                      ? 'Review required'
-                      : 'Auto-accepting content'}
+                    : selectedBucket.type === 'prompt'
+                      ? selectedBucket.requiresReview
+                        ? 'Prompt review required'
+                        : 'Auto-accepting prompt'
+                      : selectedBucket.requiresReview
+                        ? 'Review required'
+                        : 'Auto-accepting content'}
               </span>
             </header>
 

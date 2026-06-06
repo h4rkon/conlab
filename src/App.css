@@ -551,6 +551,14 @@ button:disabled {
   display: block;
 }
 
+.bucket-type-label {
+  color: #175cd3;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  margin-top: 3px;
+}
+
 .bucket-description {
   color: #667085;
   font-size: 13px;
