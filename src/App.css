@@ -60,6 +60,146 @@
   }
 }
 
+.modal-backdrop {
+  align-items: center;
+  background: rgba(13, 23, 36, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 24px;
+  position: fixed;
+  z-index: 24;
+}
+
+.modal-panel {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  box-shadow: 0 22px 54px rgba(13, 23, 36, 0.22);
+  display: grid;
+  gap: 14px;
+  max-height: calc(100svh - 48px);
+  max-width: 760px;
+  min-width: 0;
+  overflow: auto;
+  padding: 22px;
+  width: min(760px, 100%);
+}
+
+.modal-header {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.modal-header h2 {
+  color: #0d1724;
+  font-size: 22px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.modal-copy {
+  color: #475467;
+  margin: 0;
+}
+
+.icon-button {
+  background: #ffffff;
+  border-color: #d0d5dd;
+  color: #344054;
+  flex: 0 0 auto;
+  font-size: 16px;
+  min-height: 34px;
+  min-width: 34px;
+  padding: 4px;
+}
+
+.icon-button:hover {
+  background: #f9fafb;
+}
+
+.genai-settings {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.genai-settings label:last-child {
+  grid-column: 1 / -1;
+}
+
+.genai-preview,
+.genai-result {
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.genai-preview {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+}
+
+.genai-preview > span,
+.genai-result > span,
+.genai-result p span {
+  color: #667085;
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.genai-preview small {
+  border-top: 1px solid #e4e7ec;
+  color: #667085;
+  font-size: 13px;
+  padding-top: 8px;
+}
+
+.genai-result.positive {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.genai-result.warning {
+  background: #fffbeb;
+  border: 1px solid #fedf89;
+}
+
+.genai-result strong {
+  color: #0d1724;
+}
+
+.genai-result ul {
+  color: #475467;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.genai-result p {
+  color: #475467;
+  margin: 0;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-button.compact {
+  margin-top: 0;
+  width: auto;
+}
+
 .update-banner {
   align-items: center;
   background: #18202b;
@@ -928,5 +1068,18 @@ button:disabled {
     align-items: stretch;
     flex-direction: column;
     width: calc(100vw - 32px);
+  }
+
+  .genai-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modal-actions button {
+    width: 100%;
   }
 }

@@ -88,6 +88,25 @@ type WorkspaceUpdateNotification = {
   summary: string
 }
 
+type GenAISettings = {
+  endpoint: string
+  model: string
+  apiKey: string
+}
+
+type GenAICheckResult = {
+  fits_together: boolean
+  confidence: 'high' | 'medium' | 'low' | string
+  issues: string[]
+  contradictions: string[]
+  suggested_fix: string
+}
+
+type PendingContribution = {
+  contentEvent: ContentEvent
+  eventKind: EventKind
+}
+
 type EventKind = 'Content' | 'Question' | 'Decision'
 type EventAction = 'Create' | 'Revise' | 'Delete'
 type EventStatus = 'Proposed' | 'Accepted' | 'Rejected' | 'Open' | 'Resolved'
@@ -109,6 +128,9 @@ type ContentEvent = {
 const WORKSPACE_FILE = 'conlab.json'
 const CONNECTION_STORAGE_KEY = 'conlab.gitConnection'
 const LEGACY_CONNECTION_STORAGE_KEY = 'conlab.githubConnection'
+const GENAI_STORAGE_KEY = 'conlab.genaiSettings'
+const DEFAULT_GENAI_ENDPOINT = 'https://ai-proxy.lab.epam.com'
+const DEFAULT_GENAI_MODEL = 'gpt-4.1-mini-2025-04-14'
 
 const emptyWorkspace: Workspace = {
   version: 1,
@@ -542,6 +564,40 @@ function getStoredConnection() {
   }
 }
 
+function getStoredGenAISettings(): GenAISettings {
+  const defaults = {
+    endpoint: DEFAULT_GENAI_ENDPOINT,
+    model: DEFAULT_GENAI_MODEL,
+    apiKey: '',
+  }
+  const storedSettings = localStorage.getItem(GENAI_STORAGE_KEY)
+
+  if (!storedSettings) {
+    return defaults
+  }
+
+  try {
+    const parsedSettings = JSON.parse(storedSettings) as Partial<GenAISettings>
+
+    return {
+      endpoint: parsedSettings.endpoint?.trim() || defaults.endpoint,
+      model: parsedSettings.model?.trim() || defaults.model,
+      apiKey: parsedSettings.apiKey?.trim() || '',
+    }
+  } catch {
+    localStorage.removeItem(GENAI_STORAGE_KEY)
+    return defaults
+  }
+}
+
+function storeGenAISettings(settings: GenAISettings) {
+  localStorage.setItem(GENAI_STORAGE_KEY, JSON.stringify({
+    endpoint: settings.endpoint.trim() || DEFAULT_GENAI_ENDPOINT,
+    model: settings.model.trim() || DEFAULT_GENAI_MODEL,
+    apiKey: settings.apiKey.trim(),
+  }))
+}
+
 function shouldRetryCommitConflict(error: unknown) {
   if (!(error instanceof Error)) {
     return false
@@ -736,6 +792,115 @@ function summarizeWorkspaceUpdate(latest: Workspace, current: Workspace) {
   return 'Workspace settings changed'
 }
 
+function getEventKindLabel(kind: EventKind) {
+  return kind.toLowerCase()
+}
+
+function buildPlausibilityPrompt(
+  bucket: Bucket,
+  existingRenderedEvents: ContentEvent[],
+  selectedTargetEvent: ContentEvent | undefined,
+  contribution: ContentEvent,
+) {
+  const existingText = existingRenderedEvents.length
+    ? existingRenderedEvents.map((event, index) => `Block ${index + 1} (${event.id}):\n${event.body}`).join('\n\n---\n\n')
+    : 'No accepted content exists yet.'
+  const targetText = selectedTargetEvent
+    ? `Target event ${selectedTargetEvent.id} (${getEventKind(selectedTargetEvent)}, ${getEventAction(selectedTargetEvent)}):\n${selectedTargetEvent.body}`
+    : 'No specific target event.'
+
+  return `
+Check whether a new Conlab ${getEventKindLabel(getEventKind(contribution))} contribution is plausible and useful for the existing bucket.
+
+Return only valid JSON with this exact shape:
+{
+  "fits_together": true,
+  "confidence": "high | medium | low",
+  "issues": [],
+  "contradictions": [],
+  "suggested_fix": ""
+}
+
+Bucket:
+${bucket.name}
+
+Bucket description:
+${bucket.description}
+
+Existing rendered bucket text:
+${existingText}
+
+Selected target/context:
+${targetText}
+
+New contribution:
+Kind: ${getEventKind(contribution)}
+Action: ${getEventAction(contribution)}
+Body:
+${contribution.body}
+
+Contributor comment:
+${contribution.comment}
+`.trim()
+}
+
+async function runGenAIPlausibilityCheck(
+  settings: GenAISettings,
+  bucket: Bucket,
+  existingRenderedEvents: ContentEvent[],
+  selectedTargetEvent: ContentEvent | undefined,
+  contribution: ContentEvent,
+) {
+  const endpoint = settings.endpoint.trim().replace(/\/$/, '') || DEFAULT_GENAI_ENDPOINT
+  const model = settings.model.trim() || DEFAULT_GENAI_MODEL
+  const apiKey = settings.apiKey.trim()
+
+  if (!apiKey) {
+    throw new Error('Enter a GenAI API key before checking.')
+  }
+
+  const response = await fetch(
+    `${endpoint}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=2024-02-01`,
+    {
+      method: 'POST',
+      headers: {
+        'Api-Key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a text plausibility checker. Check whether text blocks fit together logically. Return only valid JSON.',
+          },
+          {
+            role: 'user',
+            content: buildPlausibilityPrompt(bucket, existingRenderedEvents, selectedTargetEvent, contribution),
+          },
+        ],
+      }),
+    },
+  )
+
+  if (!response.ok) {
+    throw new Error(`GenAI API error ${response.status}: ${await response.text()}`)
+  }
+
+  const data = await response.json() as { choices?: { message?: { content?: string } }[] }
+  const content = data.choices?.[0]?.message?.content?.trim()
+
+  if (!content) {
+    throw new Error('GenAI returned an empty response.')
+  }
+
+  try {
+    return JSON.parse(content) as GenAICheckResult
+  } catch {
+    throw new Error(`GenAI returned non-JSON content: ${content}`)
+  }
+}
+
 function MarkdownText({ className, text }: { className?: string; text: string }) {
   return (
     <div className={className ? `markdown-text ${className}` : 'markdown-text'}>
@@ -757,6 +922,7 @@ function BusyOverlay({ message }: { message: string }) {
 
 function App() {
   const [storedConnection] = useState(getStoredConnection)
+  const [storedGenAISettings] = useState(getStoredGenAISettings)
   const [connection, setConnection] = useState<GitConnection | null>(null)
   const [repoUrl, setRepoUrl] = useState(storedConnection?.repoUrl ?? '')
   const [token, setToken] = useState(storedConnection?.token ?? '')
@@ -782,6 +948,13 @@ function App() {
   const [isRenderedTextOpen, setIsRenderedTextOpen] = useState(false)
   const [isEventLogOpen, setIsEventLogOpen] = useState(false)
   const [remoteUpdate, setRemoteUpdate] = useState<WorkspaceUpdateNotification | null>(null)
+  const [genAIEndpoint, setGenAIEndpoint] = useState(storedGenAISettings.endpoint)
+  const [genAIModel, setGenAIModel] = useState(storedGenAISettings.model)
+  const [genAIKey, setGenAIKey] = useState(storedGenAISettings.apiKey)
+  const [pendingContribution, setPendingContribution] = useState<PendingContribution | null>(null)
+  const [genAIResult, setGenAIResult] = useState<GenAICheckResult | null>(null)
+  const [genAIError, setGenAIError] = useState('')
+  const [isCheckingGenAI, setIsCheckingGenAI] = useState(false)
   const syncedWorkspaceRef = useRef<LoadedWorkspace | null>(null)
   const notifiedShaRef = useRef<string | undefined>(undefined)
 
@@ -1049,6 +1222,79 @@ function App() {
     syncBucketSettings(buckets.find((bucket) => bucket.id === bucketId))
   }
 
+  function getCurrentGenAISettings() {
+    return {
+      endpoint: genAIEndpoint.trim() || DEFAULT_GENAI_ENDPOINT,
+      model: genAIModel.trim() || DEFAULT_GENAI_MODEL,
+      apiKey: genAIKey.trim(),
+    }
+  }
+
+  function persistCurrentGenAISettings() {
+    const settings = getCurrentGenAISettings()
+
+    storeGenAISettings(settings)
+    setGenAIEndpoint(settings.endpoint)
+    setGenAIModel(settings.model)
+    setGenAIKey(settings.apiKey)
+
+    return settings
+  }
+
+  function closeGenAIModal() {
+    if (isCheckingGenAI || isSaving) {
+      return
+    }
+
+    setPendingContribution(null)
+    setGenAIResult(null)
+    setGenAIError('')
+  }
+
+  async function checkPendingContributionWithGenAI() {
+    if (!selectedBucket || !pendingContribution) {
+      return
+    }
+
+    setIsCheckingGenAI(true)
+    setGenAIError('')
+    setGenAIResult(null)
+
+    try {
+      const settings = persistCurrentGenAISettings()
+      const result = await runGenAIPlausibilityCheck(
+        settings,
+        selectedBucket,
+        renderedEvents,
+        getTargetEvent(pendingContribution.contentEvent.baseEventId),
+        pendingContribution.contentEvent,
+      )
+
+      setGenAIResult(result)
+    } catch (error) {
+      setGenAIError(error instanceof Error ? error.message : 'Could not run GenAI plausibility check.')
+    } finally {
+      setIsCheckingGenAI(false)
+    }
+  }
+
+  async function postPendingContribution() {
+    if (!pendingContribution) {
+      return
+    }
+
+    persistCurrentGenAISettings()
+    const saved = await saveContentEvent(pendingContribution.contentEvent, pendingContribution.eventKind)
+
+    if (!saved) {
+      return
+    }
+
+    setPendingContribution(null)
+    setGenAIResult(null)
+    setGenAIError('')
+  }
+
   function selectBaseEvent(eventId: string) {
     setSelectedBaseEventId(eventId)
     setContentComment('')
@@ -1256,8 +1502,17 @@ function App() {
       decidedAt: eventStatus === 'Accepted' ? createdAt : undefined,
     }
 
+    setPendingContribution({
+      contentEvent,
+      eventKind: nextEventKind,
+    })
+    setGenAIResult(null)
+    setGenAIError('')
+  }
+
+  async function saveContentEvent(contentEvent: ContentEvent, nextEventKind: EventKind) {
     const saved = await saveWorkspace(`${contentEvent.status === 'Accepted' ? 'Accept' : contentEvent.status === 'Open' ? 'Ask' : 'Propose'} ${nextEventKind.toLowerCase()} ${contentEvent.id}`, (workspace) => {
-      const latestBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
+      const latestBucket = workspace.buckets.find((bucket) => bucket.id === contentEvent.bucketId)
 
       if (!latestBucket) {
         throw new Error('The selected bucket no longer exists. Latest workspace was loaded.')
@@ -1267,12 +1522,12 @@ function App() {
         throw new Error('This bucket is archived. It cannot accept new content.')
       }
 
-      if (workspace.events.some((event) => event.bucketId === selectedBucket.id && event.status === 'Proposed')) {
+      if (workspace.events.some((event) => event.bucketId === contentEvent.bucketId && event.status === 'Proposed')) {
         throw new Error('This bucket already has a proposed event in the latest workspace.')
       }
 
       const latestOpenQuestion = workspace.events.find(
-        (event) => event.bucketId === selectedBucket.id && getEventKind(event) === 'Question' && event.status === 'Open',
+        (event) => event.bucketId === contentEvent.bucketId && getEventKind(event) === 'Question' && event.status === 'Open',
       )
 
       if (latestOpenQuestion && nextEventKind !== 'Decision') {
@@ -1321,7 +1576,7 @@ function App() {
     })
 
     if (!saved) {
-      return
+      return false
     }
 
     setEventKind('Content')
@@ -1329,6 +1584,8 @@ function App() {
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
+
+    return true
   }
 
   async function decideEvent(eventId: string, status: 'Accepted' | 'Rejected') {
@@ -1501,8 +1758,140 @@ function App() {
   }
 
   return (
-    <main aria-busy={isSaving} className={isSaving ? 'app-shell is-busy' : 'app-shell'}>
+    <main aria-busy={isSaving || isCheckingGenAI} className={isSaving || isCheckingGenAI ? 'app-shell is-busy' : 'app-shell'}>
       {isSaving ? <BusyOverlay message="Saving to Git..." /> : null}
+      {pendingContribution ? (
+        <div aria-modal="true" className="modal-backdrop" role="dialog">
+          <section className="modal-panel" aria-labelledby="genai-check-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">GenAI Plausibility Check</p>
+                <h2 id="genai-check-title">Review before posting</h2>
+              </div>
+              <button
+                aria-label="Close GenAI review"
+                className="icon-button"
+                disabled={isCheckingGenAI || isSaving}
+                onClick={closeGenAIModal}
+                type="button"
+              >
+                x
+              </button>
+            </div>
+
+            <p className="modal-copy">
+              Check whether this {pendingContribution.eventKind.toLowerCase()} fits the current bucket before it is written to Git.
+              You can also post without a GenAI check.
+            </p>
+
+            <div className="genai-settings">
+              <label>
+                Endpoint
+                <input
+                  disabled={isCheckingGenAI || isSaving}
+                  onChange={(event) => setGenAIEndpoint(event.target.value)}
+                  value={genAIEndpoint}
+                />
+              </label>
+              <label>
+                Model
+                <input
+                  disabled={isCheckingGenAI || isSaving}
+                  onChange={(event) => setGenAIModel(event.target.value)}
+                  value={genAIModel}
+                />
+              </label>
+              <label>
+                API key
+                <input
+                  disabled={isCheckingGenAI || isSaving}
+                  onChange={(event) => setGenAIKey(event.target.value)}
+                  placeholder="Stored locally in this browser"
+                  type="password"
+                  value={genAIKey}
+                />
+              </label>
+            </div>
+
+            <div className="genai-preview">
+              <span>Contribution preview</span>
+              <MarkdownText text={pendingContribution.contentEvent.body} />
+              <small>{pendingContribution.contentEvent.comment}</small>
+            </div>
+
+            {genAIError ? <p className="error-text">{genAIError}</p> : null}
+
+            {genAIResult ? (
+              <div className={genAIResult.fits_together ? 'genai-result positive' : 'genai-result warning'}>
+                <strong>
+                  {genAIResult.fits_together ? 'Fits together' : 'Needs attention'} · {genAIResult.confidence} confidence
+                </strong>
+                {genAIResult.issues.length ? (
+                  <>
+                    <span>Issues</span>
+                    <ul>
+                      {genAIResult.issues.map((issue) => (
+                        <li key={issue}>{issue}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {genAIResult.contradictions.length ? (
+                  <>
+                    <span>Contradictions</span>
+                    <ul>
+                      {genAIResult.contradictions.map((contradiction) => (
+                        <li key={contradiction}>{contradiction}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {genAIResult.suggested_fix ? (
+                  <p>
+                    <span>Suggested fix</span>
+                    {genAIResult.suggested_fix}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="modal-actions">
+              <button
+                className="secondary-button compact"
+                disabled={isCheckingGenAI || isSaving}
+                onClick={closeGenAIModal}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="secondary-button compact"
+                disabled={isCheckingGenAI || isSaving}
+                onClick={postPendingContribution}
+                type="button"
+              >
+                Post without check
+              </button>
+              <button
+                disabled={isCheckingGenAI || isSaving || !genAIKey.trim()}
+                onClick={checkPendingContributionWithGenAI}
+                type="button"
+              >
+                {isCheckingGenAI ? 'Checking...' : genAIResult ? 'Run check again' : 'Check with GenAI'}
+              </button>
+              {genAIResult ? (
+                <button
+                  disabled={isCheckingGenAI || isSaving}
+                  onClick={postPendingContribution}
+                  type="button"
+                >
+                  Post contribution
+                </button>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
       {remoteUpdate ? (
         <aside className="update-banner" aria-live="polite">
           <span>
@@ -1891,6 +2280,7 @@ function App() {
               <button
                   disabled={
                   isSaving ||
+                  Boolean(pendingContribution) ||
                   !canContribute ||
                   !selectedBucketIsActive ||
                   Boolean(pendingEvent) ||
