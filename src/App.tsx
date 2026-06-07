@@ -125,7 +125,7 @@ type NarrativeSource = {
   content: string
 }
 
-type EventKind = 'Content' | 'Question' | 'Decision' | 'Comment'
+type EventKind = 'Content' | 'Question' | 'Decision' | 'Comment' | 'Reaction'
 type EventAction = 'Create' | 'Revise' | 'Delete'
 type EventStatus = 'Proposed' | 'Accepted' | 'Rejected' | 'Open' | 'Resolved'
 
@@ -660,7 +660,11 @@ function getAcceptedEventsAtLimit(
 ) {
   const chronologicalEvents = [...eventsInDisplayOrder].reverse()
   const acceptedEvents = chronologicalEvents.filter(
-    (event) => event.status === 'Accepted' && getEventKind(event) !== 'Question' && getEventKind(event) !== 'Comment',
+    (event) =>
+      event.status === 'Accepted' &&
+      getEventKind(event) !== 'Question' &&
+      getEventKind(event) !== 'Comment' &&
+      getEventKind(event) !== 'Reaction',
   )
 
   if (typeof acceptedEventLimit !== 'number') {
@@ -1143,18 +1147,28 @@ function App() {
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
   const openQuestion = selectedEvents.find((event) => getEventKind(event) === 'Question' && event.status === 'Open')
-  const topLevelEvents = selectedEvents.filter((event) => getEventKind(event) !== 'Comment')
+  const topLevelEvents = selectedEvents.filter((event) => getEventKind(event) !== 'Comment' && getEventKind(event) !== 'Reaction')
   const commentsByTargetId = new Map<string, ContentEvent[]>()
+  const seenReactionsByCommentId = new Map<string, ContentEvent[]>()
 
   for (const event of selectedEvents) {
-    if (getEventKind(event) !== 'Comment' || !event.baseEventId) {
+    if (!event.baseEventId) {
       continue
     }
 
-    commentsByTargetId.set(event.baseEventId, [
-      ...(commentsByTargetId.get(event.baseEventId) ?? []),
-      event,
-    ])
+    if (getEventKind(event) === 'Comment') {
+      commentsByTargetId.set(event.baseEventId, [
+        ...(commentsByTargetId.get(event.baseEventId) ?? []),
+        event,
+      ])
+    }
+
+    if (getEventKind(event) === 'Reaction' && event.body === 'seen') {
+      seenReactionsByCommentId.set(event.baseEventId, [
+        ...(seenReactionsByCommentId.get(event.baseEventId) ?? []),
+        event,
+      ])
+    }
   }
 
   const activeDecisionQuestion = openQuestion ?? selectedEvents.find((event) => event.id === selectedBaseEventId && getEventKind(event) === 'Question')
@@ -1979,6 +1993,76 @@ function App() {
 
     setCommentTargetEventId('')
     setCommentBody('')
+  }
+
+  async function markCommentSeen(commentEventId: string) {
+    if (!selectedBucket || !selectedBucketIsActive) {
+      return
+    }
+
+    if (!canContribute) {
+      setSaveError('Your Conlab role is read-only. You cannot react to comments.')
+      return
+    }
+
+    if ((seenReactionsByCommentId.get(commentEventId) ?? []).some((event) => event.author === eventAuthor)) {
+      return
+    }
+
+    const createdAt = new Date().toISOString()
+    const reactionEvent: ContentEvent = {
+      id: generateEventId(),
+      bucketId: selectedBucket.id,
+      author: eventAuthor,
+      body: 'seen',
+      comment: '',
+      kind: 'Reaction',
+      action: 'Create',
+      baseEventId: commentEventId,
+      status: 'Accepted',
+      createdAt,
+      decidedAt: createdAt,
+    }
+
+    await saveWorkspace(`Mark comment ${commentEventId} seen`, (workspace) => {
+      const latestBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
+
+      if (!latestBucket) {
+        throw new Error('The selected bucket no longer exists. Latest workspace was loaded.')
+      }
+
+      if (latestBucket.status === 'archived') {
+        throw new Error('This bucket is archived. It cannot accept comment reactions.')
+      }
+
+      const targetComment = workspace.events.find(
+        (event) =>
+          event.id === commentEventId &&
+          event.bucketId === selectedBucket.id &&
+          getEventKind(event) === 'Comment',
+      )
+
+      if (!targetComment) {
+        throw new Error('The selected comment no longer exists in the latest workspace.')
+      }
+
+      if (
+        workspace.events.some(
+          (event) =>
+            getEventKind(event) === 'Reaction' &&
+            event.baseEventId === commentEventId &&
+            event.body === 'seen' &&
+            event.author === eventAuthor,
+        )
+      ) {
+        return workspace
+      }
+
+      return {
+        ...workspace,
+        events: [reactionEvent, ...workspace.events],
+      }
+    })
   }
 
   async function updateBucketSettings(event: FormEvent<HTMLFormElement>) {
@@ -2939,14 +3023,31 @@ function App() {
                       {eventComments.length ? (
                         <div className="event-discussion">
                           <span>Discussion</span>
-                          {eventComments.map((commentEvent) => (
-                            <article className="event-discussion-comment" key={commentEvent.id}>
-                              <MarkdownText text={commentEvent.body} />
-                              <footer>
-                                {commentEvent.author} · {formatDate(commentEvent.createdAt)}
-                              </footer>
-                            </article>
-                          ))}
+                          {eventComments.map((commentEvent) => {
+                            const seenReactions = seenReactionsByCommentId.get(commentEvent.id) ?? []
+                            const hasSeen = seenReactions.some((reactionEvent) => reactionEvent.author === eventAuthor)
+                            const seenAuthors = seenReactions.map((reactionEvent) => reactionEvent.author).join(', ')
+
+                            return (
+                              <article className="event-discussion-comment" key={commentEvent.id}>
+                                <MarkdownText text={commentEvent.body} />
+                                <footer>
+                                  <span>
+                                    {commentEvent.author} · {formatDate(commentEvent.createdAt)}
+                                  </span>
+                                  <button
+                                    className={hasSeen ? 'reaction-button active' : 'reaction-button'}
+                                    disabled={isSaving || !canContribute || !selectedBucketIsActive || hasSeen}
+                                    onClick={() => markCommentSeen(commentEvent.id)}
+                                    title={seenAuthors ? `Seen by ${seenAuthors}` : 'Mark comment as seen'}
+                                    type="button"
+                                  >
+                                    👍 {seenReactions.length}
+                                  </button>
+                                </footer>
+                              </article>
+                            )
+                          })}
                         </div>
                       ) : null}
                       {isCommenting ? (

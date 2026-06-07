@@ -1089,10 +1089,30 @@ button:disabled {
 }
 
 .event-discussion-comment footer {
+  align-items: center;
   border-top: 1px solid #eef2f6;
   color: #667085;
+  display: flex;
   font-size: 12px;
+  gap: 10px;
+  justify-content: space-between;
   padding-top: 8px;
+}
+
+.reaction-button {
+  background: #ffffff;
+  border-color: #d0d5dd;
+  color: #344054;
+  font-size: 12px;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+.reaction-button:hover,
+.reaction-button.active {
+  background: #eef4ff;
+  border-color: #8bb7ff;
+  color: #175cd3;
 }
 
 .event-comment-actions {
