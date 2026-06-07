@@ -125,7 +125,7 @@ type NarrativeSource = {
   content: string
 }
 
-type EventKind = 'Content' | 'Question' | 'Decision'
+type EventKind = 'Content' | 'Question' | 'Decision' | 'Comment'
 type EventAction = 'Create' | 'Revise' | 'Delete'
 type EventStatus = 'Proposed' | 'Accepted' | 'Rejected' | 'Open' | 'Resolved'
 
@@ -660,7 +660,7 @@ function getAcceptedEventsAtLimit(
 ) {
   const chronologicalEvents = [...eventsInDisplayOrder].reverse()
   const acceptedEvents = chronologicalEvents.filter(
-    (event) => event.status === 'Accepted' && getEventKind(event) !== 'Question',
+    (event) => event.status === 'Accepted' && getEventKind(event) !== 'Question' && getEventKind(event) !== 'Comment',
   )
 
   if (typeof acceptedEventLimit !== 'number') {
@@ -1111,6 +1111,8 @@ function App() {
   const [selectedBaseEventId, setSelectedBaseEventId] = useState('')
   const [contentBody, setContentBody] = useState('')
   const [contentComment, setContentComment] = useState('')
+  const [commentTargetEventId, setCommentTargetEventId] = useState('')
+  const [commentBody, setCommentBody] = useState('')
   const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
   const [isRenderedTextOpen, setIsRenderedTextOpen] = useState(false)
   const [isEventLogOpen, setIsEventLogOpen] = useState(false)
@@ -1141,6 +1143,20 @@ function App() {
 
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
   const openQuestion = selectedEvents.find((event) => getEventKind(event) === 'Question' && event.status === 'Open')
+  const topLevelEvents = selectedEvents.filter((event) => getEventKind(event) !== 'Comment')
+  const commentsByTargetId = new Map<string, ContentEvent[]>()
+
+  for (const event of selectedEvents) {
+    if (getEventKind(event) !== 'Comment' || !event.baseEventId) {
+      continue
+    }
+
+    commentsByTargetId.set(event.baseEventId, [
+      ...(commentsByTargetId.get(event.baseEventId) ?? []),
+      event,
+    ])
+  }
+
   const activeDecisionQuestion = openQuestion ?? selectedEvents.find((event) => event.id === selectedBaseEventId && getEventKind(event) === 'Question')
   const activeEventKind = openQuestion ? 'Decision' : eventKind
   const acceptedTimeline = getAcceptedEventsAtLimit(selectedEvents)
@@ -1395,6 +1411,8 @@ function App() {
     setSelectedBaseEventId('')
     setContentBody('')
     setContentComment('')
+    setCommentTargetEventId('')
+    setCommentBody('')
     setHistoryAcceptedCount(countAcceptedEvents(events, bucketId))
     syncBucketSettings(buckets.find((bucket) => bucket.id === bucketId))
   }
@@ -1901,6 +1919,66 @@ function App() {
         ),
       }
     })
+  }
+
+  async function addEventComment(targetEventId: string) {
+    if (!selectedBucket || !selectedBucketIsActive) {
+      return
+    }
+
+    if (!canContribute) {
+      setSaveError('Your Conlab role is read-only. You cannot add comments.')
+      return
+    }
+
+    const body = commentBody.trim()
+
+    if (!body || commentTargetEventId !== targetEventId) {
+      return
+    }
+
+    const createdAt = new Date().toISOString()
+    const commentEvent: ContentEvent = {
+      id: generateEventId(),
+      bucketId: selectedBucket.id,
+      author: eventAuthor,
+      body,
+      comment: '',
+      kind: 'Comment',
+      action: 'Create',
+      baseEventId: targetEventId,
+      status: 'Accepted',
+      createdAt,
+      decidedAt: createdAt,
+    }
+
+    const saved = await saveWorkspace(`Comment on event ${targetEventId}`, (workspace) => {
+      const latestBucket = workspace.buckets.find((bucket) => bucket.id === selectedBucket.id)
+
+      if (!latestBucket) {
+        throw new Error('The selected bucket no longer exists. Latest workspace was loaded.')
+      }
+
+      if (latestBucket.status === 'archived') {
+        throw new Error('This bucket is archived. It cannot accept new comments.')
+      }
+
+      if (!workspace.events.some((event) => event.id === targetEventId && event.bucketId === selectedBucket.id)) {
+        throw new Error('The selected target event no longer exists in the latest workspace.')
+      }
+
+      return {
+        ...workspace,
+        events: [commentEvent, ...workspace.events],
+      }
+    })
+
+    if (!saved) {
+      return
+    }
+
+    setCommentTargetEventId('')
+    setCommentBody('')
   }
 
   async function updateBucketSettings(event: FormEvent<HTMLFormElement>) {
@@ -2692,7 +2770,7 @@ function App() {
                       {activeDecisionQuestion.id} [Question, Open] {truncate(activeDecisionQuestion.body, 70)}
                     </option>
                   ) : null}
-                  {selectedEvents.map((event) => (
+                  {topLevelEvents.map((event) => (
                     <option key={event.id} value={event.id}>
                       {event.id} [{getEventKind(event)}, {event.status}] {truncate(getEventKind(event) === 'Question' ? event.body : event.comment, 70)}
                     </option>
@@ -2797,8 +2875,8 @@ function App() {
                 </button>
               </div>
 
-              {isEventLogOpen && selectedEvents.length ? (
-                selectedEvents.map((event) => {
+              {isEventLogOpen && topLevelEvents.length ? (
+                topLevelEvents.map((event) => {
                   const kind = getEventKind(event)
                   const targetEvent = getTargetEvent(event.baseEventId)
                   const questionForDecision = kind === 'Decision' ? targetEvent : undefined
@@ -2808,6 +2886,8 @@ function App() {
                       : kind === 'Decision'
                         ? getQuestionContext(questionForDecision)
                         : undefined
+                  const eventComments = commentsByTargetId.get(event.id) ?? []
+                  const isCommenting = commentTargetEventId === event.id
 
                   return (
                     <article className="event-card" key={event.id}>
@@ -2856,32 +2936,96 @@ function App() {
                         <span>Comment</span>
                         <MarkdownText text={event.comment} />
                       </div>
+                      {eventComments.length ? (
+                        <div className="event-discussion">
+                          <span>Discussion</span>
+                          {eventComments.map((commentEvent) => (
+                            <article className="event-discussion-comment" key={commentEvent.id}>
+                              <MarkdownText text={commentEvent.body} />
+                              <footer>
+                                {commentEvent.author} · {formatDate(commentEvent.createdAt)}
+                              </footer>
+                            </article>
+                          ))}
+                        </div>
+                      ) : null}
+                      {isCommenting ? (
+                        <form
+                          className="event-comment-form"
+                          onSubmit={(formEvent) => {
+                            formEvent.preventDefault()
+                            void addEventComment(event.id)
+                          }}
+                        >
+                          <label>
+                            Add comment
+                            <textarea
+                              disabled={isSaving || !canContribute || !selectedBucketIsActive}
+                              onChange={(inputEvent) => setCommentBody(inputEvent.target.value)}
+                              rows={3}
+                              value={commentBody}
+                            />
+                          </label>
+                          <div className="event-comment-actions">
+                            <button
+                              className="secondary-button compact"
+                              disabled={isSaving}
+                              onClick={() => {
+                                setCommentTargetEventId('')
+                                setCommentBody('')
+                              }}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              disabled={isSaving || !canContribute || !selectedBucketIsActive || commentBody.trim().length < 1}
+                              type="submit"
+                            >
+                              Add comment
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
                       <footer>
                         <span>
                           {event.author} · {formatDate(event.createdAt)}
                         </span>
-                        {event.status === 'Proposed' ? (
-                          <span className="decision-actions">
-                            <button
-                              disabled={isSaving || !canReview}
-                              onClick={() => decideEvent(event.id, 'Rejected')}
-                              type="button"
-                            >
-                              Reject
-                            </button>
-                            <button
-                              disabled={isSaving || !canReview}
-                              onClick={() => decideEvent(event.id, 'Accepted')}
-                              type="button"
-                            >
-                              Accept
-                            </button>
-                          </span>
-                        ) : event.status === 'Open' ? (
-                          <span>Awaiting decision</span>
-                        ) : (
-                          <span>Decided {event.decidedAt ? formatDate(event.decidedAt) : ''}</span>
-                        )}
+                        <div className="decision-actions">
+                          <button
+                            className="secondary-inline-action"
+                            disabled={isSaving || !canContribute || !selectedBucketIsActive}
+                            onClick={() => {
+                              setCommentTargetEventId(event.id)
+                              setCommentBody('')
+                            }}
+                            type="button"
+                          >
+                            Comment{eventComments.length ? ` (${eventComments.length})` : ''}
+                          </button>
+                          {event.status === 'Proposed' ? (
+                            <>
+                              <button
+                                disabled={isSaving || !canReview}
+                                onClick={() => decideEvent(event.id, 'Rejected')}
+                                type="button"
+                              >
+                                Reject
+                              </button>
+                              <button
+                                disabled={isSaving || !canReview}
+                                onClick={() => decideEvent(event.id, 'Accepted')}
+                                type="button"
+                              >
+                                Accept
+                              </button>
+                            </>
+                          ) : event.status === 'Open' ? (
+                            <span>Awaiting decision</span>
+                          ) : (
+                            <span>Decided {event.decidedAt ? formatDate(event.decidedAt) : ''}</span>
+                          )}
+                        </div>
                       </footer>
                     </article>
                   )

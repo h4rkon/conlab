@@ -1016,7 +1016,9 @@ button:disabled {
 .event-context,
 .event-question,
 .event-change,
-.event-comment {
+.event-comment,
+.event-discussion,
+.event-comment-form {
   border-radius: 8px;
   min-width: 0;
   overflow: hidden;
@@ -1043,10 +1045,25 @@ button:disabled {
   border: 1px solid #fedf89;
 }
 
+.event-discussion {
+  background: #f0f9ff;
+  border: 1px solid #b9e6fe;
+  display: grid;
+  gap: 10px;
+}
+
+.event-comment-form {
+  background: #f8fafc;
+  border: 1px solid #e4e7ec;
+  display: grid;
+  gap: 10px;
+}
+
 .event-context span,
 .event-question span,
 .event-change span,
-.event-comment span {
+.event-comment span,
+.event-discussion > span {
   color: #667085;
   display: block;
   font-size: 12px;
@@ -1057,8 +1074,42 @@ button:disabled {
 .event-context .markdown-text,
 .event-question .markdown-text,
 .event-change .markdown-text,
-.event-comment .markdown-text {
+.event-comment .markdown-text,
+.event-discussion .markdown-text {
   margin: 6px 0 0;
+}
+
+.event-discussion-comment {
+  background: #ffffff;
+  border: 1px solid #dfe4ea;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.event-discussion-comment footer {
+  border-top: 1px solid #eef2f6;
+  color: #667085;
+  font-size: 12px;
+  padding-top: 8px;
+}
+
+.event-comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.secondary-inline-action {
+  background: #ffffff;
+  border-color: #d0d5dd;
+  color: #344054;
+}
+
+.secondary-inline-action:hover {
+  background: #f9fafb;
 }
 
 .decision-actions {
