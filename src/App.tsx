@@ -1119,6 +1119,7 @@ function App() {
   const [commentBody, setCommentBody] = useState('')
   const [historyAcceptedCount, setHistoryAcceptedCount] = useState(0)
   const [isRenderedTextOpen, setIsRenderedTextOpen] = useState(false)
+  const [isUnseenCommentsOpen, setIsUnseenCommentsOpen] = useState(true)
   const [isEventLogOpen, setIsEventLogOpen] = useState(false)
   const [remoteUpdate, setRemoteUpdate] = useState<WorkspaceUpdateNotification | null>(null)
   const [genAIEndpoint, setGenAIEndpoint] = useState(storedGenAISettings.endpoint)
@@ -1170,6 +1171,13 @@ function App() {
       ])
     }
   }
+
+  const unseenComments = selectedEvents.filter(
+    (event) =>
+      getEventKind(event) === 'Comment' &&
+      event.author !== eventAuthor &&
+      !(seenReactionsByCommentId.get(event.id) ?? []).some((reactionEvent) => reactionEvent.author === eventAuthor),
+  )
 
   const activeDecisionQuestion = openQuestion ?? selectedEvents.find((event) => event.id === selectedBaseEventId && getEventKind(event) === 'Question')
   const activeEventKind = openQuestion ? 'Decision' : eventKind
@@ -2942,6 +2950,55 @@ function App() {
                 <p className="permission-note">This bucket is archived and does not accept new content.</p>
               ) : null}
             </form>
+
+            <section className="unseen-comments" aria-label="Unseen comments">
+              <div className="section-title">
+                <div>
+                  <h3>Unseen Comments</h3>
+                  <span>{unseenComments.length} comments need your mark</span>
+                </div>
+                <button
+                  aria-expanded={isUnseenCommentsOpen}
+                  className="collapse-button"
+                  onClick={() => setIsUnseenCommentsOpen((isOpen) => !isOpen)}
+                  type="button"
+                >
+                  {isUnseenCommentsOpen ? 'Collapse' : 'Open'}
+                </button>
+              </div>
+
+              {isUnseenCommentsOpen && unseenComments.length ? (
+                <div className="unseen-comment-list">
+                  {unseenComments.map((commentEvent) => {
+                    const targetEvent = getTargetEvent(commentEvent.baseEventId)
+
+                    return (
+                      <article className="unseen-comment-card" key={commentEvent.id}>
+                        <div>
+                          <strong>{commentEvent.author}</strong>
+                          <span>
+                            commented on {commentEvent.baseEventId}
+                            {targetEvent ? ` (${getEventKind(targetEvent)})` : ''}
+                            {' '}· {formatDate(commentEvent.createdAt)}
+                          </span>
+                        </div>
+                        <MarkdownText text={commentEvent.body} />
+                        <button
+                          className="reaction-button"
+                          disabled={isSaving || !canContribute || !selectedBucketIsActive}
+                          onClick={() => markCommentSeen(commentEvent.id)}
+                          type="button"
+                        >
+                          👍 Mark seen
+                        </button>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : isUnseenCommentsOpen ? (
+                <p className="empty">No unseen comments in this bucket.</p>
+              ) : null}
+            </section>
 
             <section className="event-log" aria-label="Event log">
               <div className="section-title">

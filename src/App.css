@@ -808,6 +808,7 @@ button:disabled {
 
 .accepted-text,
 .content-form,
+.unseen-comments,
 .event-log {
   background: #ffffff;
   border: 1px solid #dfe4ea;
@@ -948,6 +949,46 @@ button:disabled {
 .empty {
   color: #667085;
   font-style: italic;
+}
+
+.unseen-comments {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.unseen-comment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.unseen-comment-card {
+  background: #f0f9ff;
+  border: 1px solid #b9e6fe;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.unseen-comment-card > div {
+  display: grid;
+  gap: 2px;
+}
+
+.unseen-comment-card strong {
+  color: #18202b;
+  font-size: 13px;
+}
+
+.unseen-comment-card span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.unseen-comment-card .reaction-button {
+  justify-self: end;
 }
 
 .event-log {
