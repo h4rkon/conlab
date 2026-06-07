@@ -156,6 +156,29 @@ const emptyWorkspace: Workspace = {
   events: [],
 }
 
+function normalizeEventKind(kind: unknown): EventKind {
+  return kind === 'Question' ||
+    kind === 'Decision' ||
+    kind === 'Comment' ||
+    kind === 'Reaction'
+    ? kind
+    : 'Content'
+}
+
+function normalizeEventStatus(status: unknown, kind: EventKind): EventStatus {
+  if (
+    status === 'Proposed' ||
+    status === 'Accepted' ||
+    status === 'Rejected' ||
+    status === 'Open' ||
+    status === 'Resolved'
+  ) {
+    return status
+  }
+
+  return kind === 'Question' ? 'Open' : 'Accepted'
+}
+
 function normalizeWorkspace(workspace?: Partial<Workspace>): Workspace {
   return {
     version: 1,
@@ -165,7 +188,23 @@ function normalizeWorkspace(workspace?: Partial<Workspace>): Workspace {
       requiresReview: bucket.requiresReview ?? true,
       status: bucket.status ?? 'active',
     })),
-    events: [...(workspace?.events ?? [])],
+    events: (workspace?.events ?? []).map((event) => {
+      const kind = normalizeEventKind(event.kind)
+      const status = normalizeEventStatus(event.status, kind)
+      const createdAt = event.createdAt || new Date(0).toISOString()
+
+      return {
+        ...event,
+        author: event.author || 'Unknown user',
+        body: typeof event.body === 'string' ? event.body : '',
+        comment: typeof event.comment === 'string' ? event.comment : '',
+        kind,
+        action: event.action ?? (event.baseEventId ? 'Revise' : 'Create'),
+        status,
+        createdAt,
+        decidedAt: event.decidedAt ?? (status === 'Accepted' || status === 'Rejected' || status === 'Resolved' ? createdAt : undefined),
+      }
+    }),
   }
 }
 
