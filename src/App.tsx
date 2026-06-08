@@ -1185,6 +1185,8 @@ function App() {
     [events, selectedBucket?.id],
   )
 
+  const access = connection?.access
+  const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
   const pendingEvent = selectedEvents.find((event) => event.status === 'Proposed')
   const openQuestion = selectedEvents.find((event) => getEventKind(event) === 'Question' && event.status === 'Open')
   const topLevelEvents = selectedEvents.filter((event) => getEventKind(event) !== 'Comment' && getEventKind(event) !== 'Reaction')
@@ -1226,13 +1228,11 @@ function App() {
   const renderedEvents = getRenderedEvents(selectedEvents, appliedAcceptedCount)
   const appliedEvent = appliedAcceptedCount > 0 ? acceptedTimeline[appliedAcceptedCount - 1] : undefined
   const selectedTargetEvent = selectedEvents.find((event) => event.id === selectedBaseEventId)
-  const access = connection?.access
   const conlabRole = access?.conlabRole ?? 'read-only'
   const canContribute = conlabRole === 'contributor' || conlabRole === 'reviewer' || conlabRole === 'admin'
   const canReview = conlabRole === 'reviewer' || conlabRole === 'admin'
   const canAdmin = conlabRole === 'admin'
   const selectedBucketIsActive = selectedBucket?.status !== 'archived'
-  const eventAuthor = access ? getDisplayUserName(access.user) : 'Unknown user'
   const promptBuckets = buckets.filter((bucket) => bucket.type === 'prompt' && bucket.status !== 'archived')
   const contentBuckets = buckets.filter((bucket) => bucket.type === 'content' && bucket.status !== 'archived')
 
