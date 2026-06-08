@@ -1,6 +1,6 @@
 # Conlab
 
-Controlled collaboration text ledger MVP, version `2.0.0`.
+Controlled collaboration text ledger MVP, version `3.0.0`.
 
 Conlab stores collaborative text work as event log entries in a Git repository. Users do not edit a shared document directly. They create buckets, add content events, ask questions, record decisions, and review changes. The rendered bucket text is calculated from accepted ledger events.
 
@@ -39,13 +39,13 @@ Conlab can also be packaged as a macOS desktop app with Tauri.
 Download the current MVP desktop build from GitHub Releases:
 
 ```text
-https://github.com/h4rkon/conlab/releases/tag/v2.0.0
+https://github.com/h4rkon/conlab/releases/tag/v3.0.0
 ```
 
 Direct macOS Apple Silicon `.dmg` download:
 
 ```text
-https://github.com/h4rkon/conlab/releases/download/v2.0.0/Conlab_2.0.0_macos_aarch64_icon_adhoc_signed.dmg
+https://github.com/h4rkon/conlab/releases/download/v3.0.0/Conlab_3.0.0_aarch64.dmg
 ```
 
 For the MVP, `.dmg` builds are ad-hoc signed but not Apple-notarized. macOS may show a Gatekeeper warning on first launch. If macOS blocks the app, right-click `Conlab.app`, choose `Open`, and confirm the launch.
@@ -84,13 +84,13 @@ The Tauri wrapper uses the same app UI and the same GitHub/GitLab workspace conn
 To publish a new desktop release:
 
 1. Build the desktop app with `make desktop-build`.
-2. Create a GitHub Release, for example `v2.0.0`.
+2. Create a GitHub Release, for example `v3.0.0`.
 3. Upload the generated `.dmg` as a release asset.
 4. Users download the `.dmg`, open it, and drag `Conlab.app` into Applications.
 
 ## Version And Release Notes
 
-Current MVP version: `2.0.0`.
+Current MVP version: `3.0.0`.
 
 The version is defined in:
 
@@ -106,7 +106,7 @@ Release-facing references are mirrored in:
 GitHub Release notes for the current MVP are in:
 
 ```text
-releases/v2.0.0.md
+releases/v3.0.0.md
 ```
 
 ## Connect A Workspace
@@ -260,6 +260,22 @@ A decision answers an open question. Decisions recapture:
 - the decision text
 
 Accepted decisions render into the bucket text.
+
+### Event Comments And Seen Marks
+
+Every event log entry can have discussion comments. This includes content, questions, decisions, and other governed event types. Comments are stored as ledger events, but they do not change the rendered bucket text.
+
+Use comments when another contributor or reviewer needs to add context, ask for clarification, or leave a review note without creating a new content change.
+
+Comment visibility:
+
+- comments appear under the event they reference
+- comments are preserved in Git with author and timestamp
+- comments are excluded from rendered bucket text and Markdown export
+
+Users can mark a comment as seen with the thumbs-up action. The seen mark is also stored as a ledger event. Each user can mark a comment once, and the comment shows the total seen count.
+
+The per-bucket `Unseen Comments` view shows comments from other users that the current user has not marked seen yet. This gives reviewers and contributors a quick way to find discussion items that still need acknowledgement.
 
 ### Rendered Text History
 
